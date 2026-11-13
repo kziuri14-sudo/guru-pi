@@ -386,7 +386,7 @@ def setup_remote(client):
                 tail = [f"žurnalo nėra: {e}"]
             await asyncio.to_thread(ntfy, "ℹ️ Raspberry būsena", "\n".join(tail)[-3500:], None, None, 1)
             return
-        if re.search(r"(?i)#pi_?(github|git|atnaujink|update)\b", txt) and not m.file:
+        if re.search(r"(?i)#pi[_ ]?(github|git|atnaujink|update)\b", txt) and not m.file:
             GH_NOW.set()                              # „#pi_github“ – tikrinti GitHub iškart
             await asyncio.to_thread(ntfy, "🔎 Raspberry tikrina GitHub", "Jei yra naujų failų – atsinaujins per minutę.",
                                     None, None, 2)
