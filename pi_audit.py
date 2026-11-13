@@ -413,6 +413,8 @@ class Auditor:
             self.db.execute("DELETE FROM q")
             self.db.execute("DELETE FROM done")
             self.db.commit()
+        if self.d.get("force_ver", 0) < 1:           # GuruChat LT visada įtraukiama – grupes perieškom iškart
+            self.d["discovered"], self.d["force_ver"] = 0, 1
         if self.d.get("settle_ver", 0) < 6:          # nauji šaltiniai ir pavadinimai – „nežinomus“ tikrinam iš naujo
             for b in self.d["bets"]:
                 if b["status"] == "unknown":
@@ -502,7 +504,8 @@ class Auditor:
             hits = sum(1 for t in texts if BET_RE.search(t))
             photos = sum(1 for m in msgs if m and m.photo)
             score = (hits + 0.5 * photos) / len(texts)
-            if (score >= 0.12 and hits >= 3) or str(dlg.id) in self.d["chats"]:
+            forced = any(w and w in _n(dlg.name) for w in self.forced())
+            if forced or (score >= 0.12 and hits >= 3) or str(dlg.id) in self.d["chats"]:
                 found[str(dlg.id)] = dlg.name
                 ent = dlg.entity
                 self.d["kind"][str(dlg.id)] = "channel" if getattr(ent, "broadcast", False) else "group"
@@ -593,15 +596,21 @@ class Auditor:
             self.d["web_used"] = 0
         return self._groq_ok() or self._gem_ok()
 
+    def forced(self):
+        """Grupės, kurios analizuojamos VISADA (net jei mažai statymų) – pagal nutylėjimą GURU G⚽AL ir GuruChat LT."""
+        return [_n(x) for x in (self.cfg.get("audit_first") or ["GURU G", "GuruGoal", "GuruChat"])]
+
     def order(self):
-        """Grupių eilė: pirma GURU G⚽AL (ar nurodytos nustatymuose), tada – kurios turi daugiausia žinučių."""
-        want = [_n(x) for x in (self.cfg.get("audit_first") or ["GURU G", "GuruGoal"])]
+        """Grupių eilė: pirma GURU G⚽AL, po jos GuruChat LT (ar nurodytos nustatymuose), tada – kurios turi daugiausia žinučių."""
+        want = self.forced()
         cnt = dict(self.db.execute("SELECT c, COUNT(*) FROM q WHERE tries<99 GROUP BY c").fetchall())
         nb = {}
         for b in self.d["bets"]:
             nb[b["c"]] = nb.get(b["c"], 0) + 1
         chats = list(self.d["chats"])
-        first = [c for c in chats if any(w and w in _n(self.d["chats"][c]) for w in want)]
+        first = []
+        for w in want:                                    # nustatymų tvarka: GURU G⚽AL → GuruChat LT
+            first += [c for c in chats if c not in first and w and w in _n(self.d["chats"][c])]
         rest = sorted((c for c in chats if c not in first), key=lambda c: -(cnt.get(c, 0) + 3 * nb.get(c, 0)))
         return first + rest, cnt
 
