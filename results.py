@@ -461,7 +461,7 @@ def _settle(b):
     if not e:
         try:
             import props                            # LiveScore neturi – ESPN / EuroLeague / FotMob
-            e2 = props.alt_event(b) or props.fotmob_event(b) or props.sofa_event(b)
+            e2 = props.alt_event(b) or props.apisports_event(b) or props.fotmob_event(b) or props.sofa_event(b)
         except Exception:
             e2 = None
         if not e2 and WEB:
@@ -470,7 +470,7 @@ def _settle(b):
             except Exception:
                 e2 = None
         if not e2:
-            return None, None, "rungtynių nerado nei LiveScore, ESPN/EuroLeague, FotMob, SofaScore, nei paieška internete"
+            return None, None, "rungtynių nerado nei LiveScore, ESPN/EuroLeague, API-Football, FotMob, SofaScore, nei paieška internete"
         if late(b, e2):
             return None, None, LATE
         if state(e2) != "done" and state(e2) != "void":
@@ -484,7 +484,7 @@ def _settle(b):
     if state(e) in ("ns", "live") and e.get("_start") and e["_start"] < datetime.now() - timedelta(hours=4):
         try:                                        # LiveScore „įstrigo“ (pvz. OT, nors seniai baigėsi) – kitas šaltinis
             import props
-            e2 = props.alt_event(b) or props.fotmob_event(b) or props.sofa_event(b)
+            e2 = props.alt_event(b) or props.apisports_event(b) or props.fotmob_event(b) or props.sofa_event(b)
         except Exception:
             e2 = None
         if not e2 and WEB:

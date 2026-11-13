@@ -410,6 +410,8 @@ class Auditor:
         results.WEB = self.web_event                      # paskutinis šaltinis – Google paieška
         if props:
             props.WEB_STAT = self.web_stat
+            props.CFG = cfg                               # tas pats žodynas – raktas įsigalioja iškart
+            props.CACHE_DIR = base
 
     # ------------------------------------------------------------------ saugojimas
     def _insert(self, items):
@@ -1116,6 +1118,7 @@ Jei žaidėjas nežaidė – "played": false. Jei patikimo šaltinio neradai –
                 "backfill_left": self.backfill_left(), "focus": self.d["chats"].get(fc, "") if fc else "",
                 "web_used": self.d.get("web_used", 0),
                 "sofascore": (props.SOFA_STATE.get("last") if props else ""),
+                "apifootball": (props.APIS_STATE.get("last") if props else ""),
                 "done_msgs": self.d["done_msgs"], "ai_used": self.d["ai_used"] + self.d.get("groq_used", 0),
                 "ai_cap": self.cap + (self.gcap if self.cfg.get("groq_key") else 0),
                 "groq_used": self.d.get("groq_used", 0), "gemini_used": self.d["ai_used"],
