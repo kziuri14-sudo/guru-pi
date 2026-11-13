@@ -622,12 +622,43 @@ Jei patikimo šaltinio neradai arba nesi tikras, kad tai tos pačios rungtynės 
 Reikia: {what}. Grąžink TIK JSON: {{"found": true/false, "value": skaičius, "played": true/false, "source": "adresas"}}
 Jei žaidėjas nežaidė – "played": false. Jei patikimo šaltinio neradai – {{"found": false}}. NIEKO NESUGALVOK."""
 
+    def _web_groq(self, prompt):
+        """Groq „compound“ modelis su paieška internete – kai Gemini paieška ilsisi."""
+        key = self.cfg.get("groq_key")
+        if not key or time.time() < self.d.get("gweb_pause", 0):
+            return None
+        _groq_models(key, False, self.cfg, self.log)
+        ids = [m for m in _GROQ_M["ids"] if "compound" in m] or ["groq/compound", "groq/compound-mini"]
+        for model in ids[:2]:
+            body = json.dumps({"model": model, "messages": [{"role": "user", "content": prompt}],
+                               "temperature": 0}).encode()
+            req = urllib.request.Request(GROQ_URL, data=body, method="POST",
+                                         headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}",
+                                                  "User-Agent": "guru-pi/1.0"})
+            try:
+                with urllib.request.urlopen(req, timeout=120) as r:
+                    d = json.loads(r.read().decode())
+                msg = (d.get("choices") or [{}])[0].get("message") or {}
+                self.d["web_used"] = self.d.get("web_used", 0) + 1
+                if not msg.get("executed_tools"):
+                    continue                                # neieškojo internete – nepasitikim
+                out = _parse_json_any(msg.get("content") or "")
+                if out is not None:
+                    return out
+            except urllib.error.HTTPError as e:
+                if e.code == 429:
+                    self.d["gweb_pause"] = time.time() + 120
+                self._err(f"web groq {e.code}")
+            except Exception as e:
+                self._err(f"web groq: {type(e).__name__}")
+        return None
+
     def _web(self, prompt):
-        """Gemini su Google paieška – paskutinis šaltinis, kai LiveScore/ESPN/EuroLeague neturi."""
-        if not self.cfg.get("gemini_key") or self.d.get("web_used", 0) >= int(self.cfg.get("audit_web_per_day", 300)):
+        """Gemini su Google paieška (o jei ilsisi – Groq su paieška) – kai LiveScore/ESPN/EuroLeague neturi."""
+        if self.d.get("web_used", 0) >= int(self.cfg.get("audit_web_per_day", 600)):
             return None
-        if time.time() < self.d.get("web_pause", 0):
-            return None
+        if not self.cfg.get("gemini_key") or time.time() < self.d.get("web_pause", 0):
+            return self._web_groq(prompt)
         body = json.dumps({"contents": [{"role": "user", "parts": [{"text": prompt}]}],
                            "tools": [{"google_search": {}}], "generationConfig": {"temperature": 0}}).encode()
         for model in (self.cfg.get("gemini_web_models") or ["gemini-3.5-flash", "gemini-3.5-flash-lite"]):
@@ -645,14 +676,20 @@ Jei žaidėjas nežaidė – "played": false. Jei patikimo šaltinio neradai –
                               if not p.get("thought"))
                 return _parse_json_any(txt)
             except urllib.error.HTTPError as e:
+                eb = ""
+                try:
+                    eb = e.read().decode("utf-8", "ignore")
+                except Exception:
+                    pass
                 if e.code == 429:
-                    self.d["web_pause"] = time.time() + 1800
-                    self._err("web 429")
-                    return None
-                self._err(f"web {e.code}")
+                    day = "PerDay" in eb or "per day" in eb.lower()
+                    self.d["web_pause"] = time.time() + (3 * 3600 if day else 90)
+                    self._err("web 429" + (" (dienos)" if day else ""))
+                    return self._web_groq(prompt)
+                self._err(f"web {e.code}: " + re.sub(r"\s+", " ", eb)[:80])
             except Exception as e:
                 self._err(f"web: {type(e).__name__}")
-        return None
+        return self._web_groq(prompt)
 
     def web_event(self, leg):
         """Rezultatas iš interneto (Google) – LiveScore formatu, kad įvertintų tas pats results.evaluate."""
