@@ -324,8 +324,9 @@ def ocr(img):
     except Exception:
         return ""
     t = re.sub(r"[ \t]+", " ", t)
-    t = re.sub(r"\n\s*\n+", "\n", t).strip()
-    return t[:1500] if len(re.findall(r"[A-Za-z0-9]", t)) >= 15 else ""
+    lines = [l.strip() for l in t.splitlines() if len(re.findall(r"[A-Za-z0-9]", l)) >= 3]
+    t = "\n".join(lines)                              # be OCR šiukšlių – mažiau žodžių Groq'ui (dienos limitas)
+    return t[:800] if len(re.findall(r"[A-Za-z0-9]", t)) >= 15 else ""
 
 
 class Auditor:
@@ -344,7 +345,7 @@ class Auditor:
                      "pause_until": 0, "kind": {}}.items():
             self.d.setdefault(k, v)
         self.days = int(cfg.get("audit_days", 60))
-        self.cap = int(cfg.get("audit_ai_per_day", 250))            # Gemini užklausos (nuotraukoms) per dieną
+        self.cap = int(cfg.get("audit_gemini_per_day", 800))        # Gemini užklausos (po 8 nuotraukas) per dieną
         self.gcap = int(cfg.get("audit_groq_per_day", 3000))        # Groq – limitus saugo patys modeliai (429)
         self.db = sqlite3.connect(str(base / "audit_q.db"), check_same_thread=False)
         self.db.execute("CREATE TABLE IF NOT EXISTS q (c TEXT, id INTEGER, t TEXT, txt TEXT, photo INTEGER, "
