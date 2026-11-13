@@ -73,6 +73,16 @@ def _units(b):
     return (o - 1) if b["status"] == "won" else (-1.0 if b["status"] == "lost" else 0.0)
 
 
+def _bettable(bets):
+    """Tik tie statymai, kuriuos buvo galima realiai pastatyti prieš rungtynes – su bukmekerių koeficientu."""
+    out = []
+    for b in bets:
+        m = b.get("mkt")
+        if isinstance(m, dict) and m.get("odds"):
+            out.append(dict(b, odds=m["odds"]))
+    return out
+
+
 def _leaders(bets, chats, kind):
     """Pelningiausia grupė ir taikliausias žmogus pokalbių grupėse (tik patikrinti statymai)."""
     gs, ms = {}, {}
@@ -1019,7 +1029,7 @@ Jei žaidėjas nežaidė – "played": false. Jei patikimo šaltinio neradai –
 
     def settle_some(self, limit=60):
         now = datetime.now()
-        todo, picked = [], []
+        todo, picked, probes = [], [], set()
         od, _ = self.order()
         rank = {c: i for i, c in enumerate(od)}
         bets = sorted(self.d["bets"], key=lambda x: (rank.get(x["c"], 999), str(x["t"])), reverse=False)
@@ -1033,12 +1043,19 @@ Jei žaidėjas nežaidė – "played": false. Jei patikimo šaltinio neradai –
                 k = self._kick(l, b)
                 if k + timedelta(hours=2, minutes=15) > now:
                     l["note"] = "laukia rungtynių pabaigos"
-                    continue
+                    # AI kartais neteisingai nuskaito laiką (kita laiko juosta) – kas 30 min. vis tiek pažiūrim,
+                    # gal rungtynės jau baigėsi; nepavykus – bandymų neskaičiuojam
+                    if l.get("probe", 0) > time.time() or k > now + timedelta(hours=8):
+                        continue
+                    l["probe"] = time.time() + 1800
+                    probes.add(id(l))
                 todo.append((b, l, k))
         with ThreadPoolExecutor(max_workers=6) as ex:     # keli šaltiniai vienu metu – ~6× greičiau
             outs = list(ex.map(lambda x: self._check_leg(x[1], x[2]), todo))
         checked, waiting = {}, {}
         for (b, l, k), (st, detail, info) in zip(todo, outs):
+            if id(l) in probes and not st:
+                continue                                  # dar nesibaigė – laukiam kaip anksčiau
             checked[id(b)] = checked.get(id(b), 0) + 1
             if st:
                 l["status"], l["detail"] = st, detail
@@ -1128,6 +1145,7 @@ Jei žaidėjas nežaidė – "played": false. Jei patikimo šaltinio neradai –
         today = datetime.now().strftime("%Y-%m-%d")
         for g in groups:
             g["today"] = _stats([b for b in by_c.get(g["cid"], []) if str(b["t"])[:10] == today])
+            g["bet"] = _stats(_bettable(by_c.get(g["cid"], [])))
         od, cnt = self.order()
         fc = next((c for c in od if cnt.get(c)), None)
         for g in groups:
@@ -1178,14 +1196,18 @@ Jei žaidėjas nežaidė – "played": false. Jei patikimo šaltinio neradai –
         for b in sorted(bets, key=lambda x: x["t"], reverse=True)[:400]:
             recent.append({"t": b["t"], "c": b["c"], "chat": chats.get(b["c"], b["c"]), "who": b.get("un"),
                            "status": b["status"], "odds": b.get("odds"), "photo": b.get("photo", False),
+                           "mkt": b.get("mkt"),
                            "legs": [{"m": f"{l.get('home')} – {l.get('away') or ''}".strip(" –"), "pick": l.get("pick"),
                                      "st": l.get("status"),
                                      "d": (l.get("detail") or (("⏳ " + l["note"]) if l.get("note") else ""))[:110],
                                      "k": str(self._kick(l, b))[5:16]} for l in b["legs"][:6]]})
+        bb = _bettable(bets)
         leaders = {"today": _leaders([b for b in bets if str(b["t"])[:10] == today], chats, kind),
-                   "all": _leaders(bets, chats, kind)}
+                   "all": _leaders(bets, chats, kind), "bet": _leaders(bb, chats, kind)}
         return {"groups": groups, "total": tot, "leaders": leaders, "since": self.d.get("since"),
-                "today_total": _stats([b for b in bets if str(b["t"])[:10] == today]), "series": series, "hours": hours, "sides": sides, "sports": sports,
+                "today_total": _stats([b for b in bets if str(b["t"])[:10] == today]), "bet_total": _stats(bb),
+                "mkt_checked": sum(1 for b in bets if "mkt" in b), "mkt_ok": len(bb),
+                "odds_src": (props.ODDS_STATE.get("last") if props and hasattr(props, "ODDS_STATE") else ""), "series": series, "hours": hours, "sides": sides, "sports": sports,
                 "odds": oddsb, "recent": recent, "chats": len(chats), "queue": self.qlen(), "queue_photo": self.qlen(True),
                 "backfill_left": self.backfill_left(), "focus": self.d["chats"].get(fc, "") if fc else "",
                 "web_used": self.d.get("web_used", 0),
@@ -1201,6 +1223,50 @@ Jei žaidėjas nežaidė – "played": false. Jei patikimo šaltinio neradai –
                 "bets": len(bets), "days": self.days, "paused": time.time() < self.d.get("pause_until", 0)}
 
     # ------------------------------------------------------------------ amžinas ciklas
+    def odds_some(self, limit=6):
+        """Prototipas „ar galima pastatyti“: kiekvienam futbolo statymui – bukmekerių koeficientas prieš rungtynes."""
+        if not props or not hasattr(props, "market_odds") or not self.cfg.get("apisports_key"):
+            return
+        cut = (datetime.now() - timedelta(days=3)).strftime("%Y-%m-%d")
+        done = 0
+        for b in sorted(self.d["bets"], key=lambda x: str(x["t"]), reverse=True):
+            if done >= limit:
+                break
+            if "mkt" in b or str(b["t"])[:10] < cut or b.get("mkt_try", 0) >= 3 or b.get("mkt_next", 0) > time.time():
+                continue
+            if any("ne prognozė" in (l.get("detail") or "") for l in b["legs"]):
+                b["mkt"] = None                           # paskelbta po rungtynių pradžios – pastatyti nebuvo galima
+                continue
+            got, why = [], ""
+            for l in b["legs"]:
+                if "mkt" not in l:
+                    lg = dict(l, kickoff=self._kick(l, b).isoformat(timespec="minutes"), created=str(b["t"])[:16])
+                    try:
+                        r = props.market_odds(lg)
+                    except Exception as e:
+                        r = None
+                        self._err(f"koef.: {e}")
+                    done += 1
+                    if r is None:                         # rungtynių API-Sports nėra arba limitas – vėliau
+                        break
+                    l["mkt"] = r
+                r = l.get("mkt")
+                if not r or "odds" not in r:
+                    why = (r or {}).get("none", "")
+                    break
+                got.append(r["odds"])
+            else:
+                o = 1.0
+                for x in got:
+                    o *= x
+                b["mkt"] = {"odds": round(o, 2), "posted": b.get("odds"), "legs": len(got)}
+                continue
+            if why:
+                b["mkt"] = {"none": why}
+            else:
+                b["mkt_try"] = b.get("mkt_try", 0) + 1
+                b["mkt_next"] = time.time() + 3 * 3600
+
     async def settle_loop(self):
         """Rezultatai tikrinami atskirai nuo žinučių analizės – nelaukia nuotraukų eilės."""
         last_pf = 0
@@ -1213,6 +1279,7 @@ Jei žaidėjas nežaidė – "played": false. Jei patikimo šaltinio neradai –
                     self._err(f"api-sports: {e}")
             try:
                 await asyncio.to_thread(self.settle_some)
+                await asyncio.to_thread(self.odds_some)
                 self.save()
             except Exception as e:
                 self.log.info("audit rezultatai: %s", e)

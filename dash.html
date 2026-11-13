@@ -84,13 +84,13 @@ th{font-size:12px;color:var(--mut);font-weight:600;border-top:0}td.n,th.n{text-a
 
 <section id="v-siandien">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-    <div class="seg" id="perSeg"><button data-per="today">Šiandien</button><button data-per="all">Nuo pradžios</button></div>
+    <div class="seg" id="perSeg"><button data-per="today">Šiandien</button><button data-per="all">Viskas</button><button data-per="bet">Galima statyti</button></div>
     <span class="sub" id="sinceTxt"></span>
   </div>
   <div class="card hero">
     <h2><span id="heroLbl">Šiandienos pelnas</span><span class="sub" id="heroPend"></span></h2>
-    <div class="big" id="heroUnits">–</div><div class="sub">vienetų, statant po 1 vnt. kiekvienam statymui</div>
-    <div class="kpis"><div class="kpi"><b id="kN">–</b><span>patikrinta</span></div><div class="kpi"><b id="kW">–</b><span>laim. / pralaim.</span></div><div class="kpi"><b id="kH">–</b><span>pataikymas</span></div></div>
+    <div class="big" id="heroUnits">–</div><div class="sub" id="heroSub">vienetų, statant po 1 vnt. kiekvienam statymui</div>
+    <div class="kpis"><div class="kpi"><b id="kN">–</b><span>patikrinta</span></div><div class="kpi"><b id="kW">–</b><span>laimėta / pral.</span></div><div class="kpi"><b id="kH">–</b><span>pataikymas</span></div></div>
   </div>
   <div class="leaders">
     <div class="card leader" id="lg"><div class="lbl">🏆 Pelningiausia grupė</div><div class="nm" id="lgN">–</div><div class="val" id="lgV"></div><div class="sub" id="lgS"></div></div>
@@ -102,14 +102,14 @@ th{font-size:12px;color:var(--mut);font-weight:600;border-top:0}td.n,th.n{text-a
 
 <section id="v-grupes">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-    <div class="seg" id="grpSeg"><button data-per="today">Šiandien</button><button data-per="all">Nuo pradžios</button></div>
+    <div class="seg" id="grpSeg"><button data-per="today">Šiandien</button><button data-per="all">Viskas</button><button data-per="bet">Galima statyti</button></div>
     <span class="sub">pagal pelną</span>
   </div>
   <div class="card" id="grpList"></div>
 </section>
 
 <section id="v-statymai">
-  <div class="chips" id="betChips"><button data-st="all">Visi</button><button data-st="won">Laimėti</button><button data-st="lost">Pralaimėti</button><button data-st="pending">Laukia</button><button data-st="unknown">Nežinomi</button></div>
+  <div class="chips" id="betChips"><button data-st="all">Visi</button><button data-st="won">Laimėti</button><button data-st="lost">Pralaimėti</button><button data-st="pending">Laukia</button><button data-st="unknown">Nežinomi</button><button data-st="bet">Galima statyti</button></div>
   <div class="card" id="betList"></div>
 </section>
 
@@ -161,11 +161,12 @@ function stLabel(b){if(b.status!=='pending')return ST_TXT[b.status]||b.status;re
 function betHtml(b,open){const t=new Date(b.t);const when=t.toLocaleString('lt',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
   return `<div class="bet${open?' open':''}" onclick="this.classList.toggle('open')"><div class="top"><div class="who">${esc(N(b.chat))}${b.who?' · '+esc(b.who):''} · ${when}</div><span class="chip c-${b.status}">${stLabel(b)}</span></div>
   ${b.legs.map(l=>`<div class="leg"><b>${esc(l.m)}</b> <span class="pk">· ${esc(l.pick)}</span></div>`).join('')}
-  ${b.odds?`<div class="sub">koef. ${esc(b.odds)}</div>`:''}
+  <div class="sub">${b.odds?`grupės koef. ${esc(b.odds)}`:''}${b.mkt&&b.mkt.odds?`${b.odds?' · ':''}<b style="color:var(--acc)">bukmekeriai ${esc(b.mkt.odds)}</b>`:b.mkt&&b.mkt.none?`${b.odds?' · ':''}nepastatoma: ${esc(b.mkt.none)}`:b.mkt===null?`${b.odds?' · ':''}nepastatoma: paskelbta po pradžios`:''}</div>
   <div class="det">${b.legs.map(l=>esc(l.d||'–')).join('<br>')}</div></div>`}
 function leaderSet(){const L=(D.audit&&D.audit.leaders)||{};return L[PER]||{}}
-function renderHome(){const a=D.audit||{};const s=PER==='today'?a.today_total:a.total;
-  $('heroLbl').textContent=PER==='today'?'Šiandienos pelnas':'Pelnas nuo pradžios';
+function renderHome(){const a=D.audit||{};const s=PER==='today'?a.today_total:PER==='bet'?a.bet_total:a.total;
+  $('heroLbl').textContent=PER==='today'?'Šiandienos pelnas':PER==='bet'?'Jei būtum statęs pas bukmekerius':'Pelnas nuo pradžios';
+  $('heroSub').textContent=PER==='bet'?`vienetų po 1 vnt., pagal bukmekerių koeficientus · galima pastatyti ${a.mkt_ok||0} iš ${a.mkt_checked||0} patikrintų`:'vienetų, statant po 1 vnt. kiekvienam statymui';
   if(s){$('heroUnits').textContent=u(s.units);$('heroUnits').className='big '+cls(s.units);$('kN').textContent=s.n;$('kW').textContent=s.w+' / '+s.l;$('kH').textContent=pct(s.hit);$('heroPend').textContent=s.pend?`dar laukia ${s.pend}`:''}
   const L=leaderSet();const g=L.group,m=L.member;
   $('lgN').textContent=g?N(g.chat):'Dar nėra';$('lgV').textContent=g?u(g.units)+' vnt.':'';$('lgV').className='val '+(g?cls(g.units):'');
@@ -174,20 +175,20 @@ function renderHome(){const a=D.audit||{};const s=PER==='today'?a.today_total:a.
   $('lmS').textContent=m?`${N(m.chat)} · ${m.w}–${m.l} · ${u(m.units)} vnt.`:'Pokalbių grupėse dar nėra patikrintų statymų';
   $('lg').onclick=()=>g&&openGroup(g.cid);$('lm').onclick=()=>m&&openGroup(m.cid);
   const today=new Date().toLocaleDateString('sv');
-  const R=(a.recent||[]).filter(b=>PER!=='today'||b.t.slice(0,10)===today);
+  const R=(a.recent||[]).filter(b=>PER==='all'||(PER==='bet'?(b.mkt&&b.mkt.odds):b.t.slice(0,10)===today));
   $('recent5').innerHTML=R.slice(0,5).map(b=>betHtml(b)).join('')||'<div class="empty">Šiandien statymų dar nerasta</div>';
   const q=a.queue||0,done=a.done_msgs||0;$('progTxt').textContent=q?`Skaitoma: ${N(a.focus||'')} · liko ${q} žinučių (iš jų nuotraukų ${a.queue_photo||0})`:`Visos žinutės perskaitytos · naujos tikrinamos kas 3 min.`;
   $('progBar').style.width=(done+q?Math.round(done/(done+q)*100):100)+'%';
   $('sinceTxt').textContent=a.since?'nuo '+new Date(a.since).toLocaleDateString('lt',{month:'2-digit',day:'2-digit'}):'';
   document.querySelectorAll('#perSeg button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.per===PER))}
-function groupStats(g){return GPER==='today'?(g.today||{}):g}
+function groupStats(g){return GPER==='today'?(g.today||{}):GPER==='bet'?(g.bet||{}):g}
 function renderGroups(){const a=D.audit||{};const gs=(a.groups||[]).map(g=>({g,s:groupStats(g)})).filter(x=>(x.s.n||0)+(x.s.pend||0)>0||GPER==='all');
   gs.sort((x,y)=>(y.s.units||0)-(x.s.units||0)||(y.s.n||0)-(x.s.n||0));
   $('grpList').innerHTML=gs.map(({g,s})=>`<div class="row" onclick="openGroup('${esc(g.cid)}')"><div class="main"><div class="t">${g.proven?'⭐ ':''}${esc(N(g.chat))}<span class="badge">${g.kind==='group'?'pokalbiai':'kanalas'}</span></div>
    <div class="s">${s.w||0}–${s.l||0}${s.pend?' · laukia '+s.pend:''} · pataikymas ${pct(s.hit)}${g.late?' · ⚠ '+g.late+' po rungtynių':''}${g.state==='analizuojama'?' · skaitoma':''}</div></div>
    <div class="r ${cls(s.units)}">${u(s.units)}<small>vnt.</small></div></div>`).join('')||'<div class="empty">Šiandien dar nėra statymų</div>';
   document.querySelectorAll('#grpSeg button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.per===GPER))}
-function renderBets(){const R=(D.audit&&D.audit.recent)||[];const L=R.filter(b=>ST==='all'||b.status===ST);
+function renderBets(){const R=(D.audit&&D.audit.recent)||[];const L=R.filter(b=>ST==='all'||(ST==='bet'?(b.mkt&&b.mkt.odds):b.status===ST));
   $('betList').innerHTML=L.slice(0,150).map(b=>betHtml(b)).join('')||'<div class="empty">Nieko nerasta</div>';
   document.querySelectorAll('#betChips button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.st===ST))}
 function openGroup(cid){const a=D.audit||{};const g=(a.groups||[]).find(x=>x.cid===cid);if(!g)return;const s=g;
@@ -206,7 +207,7 @@ function renderMore(){const c=D.current||{},en=D.energy||{},a=D.audit||{};
   $('rCpu').textContent=c.cpu!=null?Math.round(c.cpu)+' %':'–';$('rW').textContent=c.w!=null?c.w.toFixed(2)+' W':'–';
   $('rTemp').textContent=c.temp!=null?c.temp.toFixed(1)+' °C':'–';$('rEur').textContent=en.eur_month!=null?en.eur_month.toFixed(2)+' €':'–';
   $('upTxt').textContent=D.uptime_h!=null?'veikia '+D.uptime_h+' val.':'';
-  const src=[['API-Sports',a.apifootball],['SportScore',a.sportscore],['365Scores',a.s365],['SofaScore',a.sofascore],['Paieška internete',(a.web_used||0)+' paieškų šiandien'],['AI šiandien',`Groq ${a.groq_used||0} · Gemini ${a.gemini_used||0} · OCR ${a.ocr_used||0}`]];
+  const src=[['API-Sports',a.apifootball],['SportScore',a.sportscore],['365Scores',a.s365],['SofaScore',a.sofascore],['Bukmekerių koef.',a.odds_src],['Paieška internete',(a.web_used||0)+' paieškų šiandien'],['AI šiandien',`Groq ${a.groq_used||0} · Gemini ${a.gemini_used||0} · OCR ${a.ocr_used||0}`]];
   $('srcList').innerHTML=src.map(([n,v])=>`<div class="row" style="cursor:default"><div class="main"><div class="t">${n}</div><div class="s">${esc(v||'–')}</div></div></div>`).join('');
   const sig=(D.events||[]).filter(e=>e.kind==='signal').slice(-15).reverse();
   $('sigList').innerHTML=sig.map(e=>`<div class="row" style="cursor:default"><div class="main"><div class="t">${esc((e.text||'').split('\n')[0])}</div><div class="s">${esc((e.text||'').split('\n').slice(1).join(' · '))}</div></div><div class="r"><small>${new Date(e.t).toLocaleString('lt',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}</small>${e.link?`<a class="link" href="${esc(e.link)}" target="_blank" rel="noopener">Atidaryti</a>`:''}</div></div>`).join('')||'<div class="empty">Signalų dar nebuvo</div>';

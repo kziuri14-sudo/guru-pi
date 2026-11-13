@@ -718,7 +718,7 @@ def _apis_day(d, sport="soccer"):
         lg = x.get("league") or {}
         if sport == "soccer":
             fx, sc = x.get("fixture") or {}, x.get("score") or {}
-            out.append({"date": fx.get("date"), "st": (fx.get("status") or {}).get("short"),
+            out.append({"id": fx.get("id"), "date": fx.get("date"), "st": (fx.get("status") or {}).get("short"),
                         "h": (tm.get("home") or {}).get("name"), "a": (tm.get("away") or {}).get("name"),
                         "gh": (x.get("goals") or {}).get("home"), "ga": (x.get("goals") or {}).get("away"),
                         "ft": sc.get("fulltime"), "ht": sc.get("halftime"),
@@ -966,3 +966,160 @@ def sportscore_event(leg):
     h, a = leg.get("home"), leg.get("away")
     e["_swapped"] = (R.mscore(h, e["_t2"]) + R.mscore(a, e["_t1"])) > (R.mscore(h, e["_t1"]) + R.mscore(a, e["_t2"]))
     return e
+
+
+# ---------------------------------------------------------------- lažybų bendrovių koeficientai (API-Sports /odds)
+# Prototipas: ar statymą realiai galima pastatyti ir už kokį koeficientą. Imam viešus bukmekerių koeficientus
+# iš API-Sports (Bet365, Unibet, 1xBet ir kt.) – kazino privataus API neliečiam.
+ODDS_URL = "https://v3.football.api-sports.io/odds"
+ODDS_STATE = {"last": "", "day": "", "used": 0}
+
+
+def _apis_fixture(leg):
+    """Rungtynės iš API-Sports dienos sąrašo (futbolas) – grąžina (įrašas, ar apversta)."""
+    if (_sp(leg) or "soccer") != "soccer":
+        return None, False
+    k, c = _when(leg)
+    best = None
+    for d in (k.date(), k.date() - timedelta(days=1), k.date() + timedelta(days=1)):
+        for m in _apis_day(d, "soccer") or []:
+            ok, sw = _pair(leg, [m["h"]], [m["a"]])
+            if not ok or not m.get("id"):
+                continue
+            try:
+                t = datetime.fromisoformat(str(m["date"])).astimezone().replace(tzinfo=None)
+            except Exception:
+                continue
+            if not (c - timedelta(hours=30) <= t <= c + timedelta(hours=36)):
+                continue
+            gap = abs((t - k).total_seconds())
+            if best is None or gap < best[0]:
+                best = (gap, m, sw, t)
+    return (best[1], best[2], best[3]) if best else (None, False, None)
+
+
+def _odds_raw(fid):
+    key = (CFG or {}).get("apisports_key")
+    f = (CACHE_DIR / f"odds_{fid}.json") if CACHE_DIR else None
+    if f and f.exists() and time.time() - f.stat().st_mtime < 6 * 3600:
+        try:
+            return json.loads(f.read_text("utf-8"))
+        except Exception:
+            pass
+    today = datetime.now().strftime("%Y-%m-%d")
+    used = APIS_STATE["used"] if isinstance(APIS_STATE.get("used"), dict) else {}
+    if APIS_STATE.get("day") != today:
+        APIS_STATE["day"], APIS_STATE["used"] = today, {}
+        used = APIS_STATE["used"]
+    if used.get("soccer", 0) >= int((CFG or {}).get("apisports_odds_until", 80)):
+        ODDS_STATE["last"] = "dienos užklausų limitas – tęsiam rytoj"
+        return None
+    req = urllib.request.Request(f"{ODDS_URL}?fixture={fid}", headers={"x-apisports-key": key, "Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            raw = json.loads(r.read().decode("utf-8"))
+    except Exception as e:
+        ODDS_STATE["last"] = f"klaida {type(e).__name__}"
+        return None
+    used["soccer"] = used.get("soccer", 0) + 1
+    if raw.get("errors"):
+        ODDS_STATE["last"] = str(raw["errors"])[:160]
+        return None
+    books = []
+    for x in raw.get("response") or []:
+        for bk in x.get("bookmakers") or []:
+            mk = {}
+            for bt in bk.get("bets") or []:
+                mk[str(bt.get("name"))] = {str(v.get("value")): v.get("odd") for v in bt.get("values") or []}
+            books.append({"name": bk.get("name"), "m": mk})
+    if f:
+        try:
+            f.write_text(json.dumps(books, ensure_ascii=False), "utf-8")
+        except Exception:
+            pass
+    return books
+
+
+def _side_of(team, m, sw):
+    """'Home' / 'Away' / 'Draw' API-Sports rungtynėse."""
+    t = _fold(team or "")
+    if re.fullmatch(r"draw|x|lygios\w*", t):
+        return "Draw"
+    sh, sa = R.mscore(team, m["h"]), R.mscore(team, m["a"])
+    if max(sh, sa) <= 0:
+        return None
+    return "Home" if sh >= sa else "Away"
+
+
+def _wanted(leg, m, sw):
+    """Kokios rinkos ir kokios reikšmės ieškoti (API-Sports pavadinimais)."""
+    if is_prop(leg) or R._period_text(leg) != "ft":
+        return None
+    side = str(leg.get("side") or "").lower()
+    pick = _fold(leg.get("pick") or "")
+    line = leg.get("line")
+    try:
+        line = float(line) if line is not None else None
+    except Exception:
+        line = None
+    if side == "win" or (not side and re.search(r"\b(win|laimes|pergale)\b", pick)):
+        sd = _side_of(leg.get("team") or (leg.get("home") if not sw else leg.get("away")), m, sw)
+        return ("Match Winner", [sd]) if sd else None
+    if side == "dc":
+        mm = re.search(r"\b(1x|x2|12)\b", pick)
+        if mm:
+            v = {"1x": "Home/Draw", "x2": "Draw/Away", "12": "Home/Away"}[mm.group(1)]
+            if sw and v != "Home/Away":
+                v = {"Home/Draw": "Draw/Away", "Draw/Away": "Home/Draw"}[v]
+            return "Double Chance", [v]
+        sd = _side_of(leg.get("team"), m, sw)
+        return ("Double Chance", ["Home/Draw" if sd == "Home" else "Draw/Away"]) if sd in ("Home", "Away") else None
+    if side == "btts":
+        return "Both Teams Score", ["No" if re.search(r"\b(no|ne)\b", pick) else "Yes"]
+    if side in ("over", "under") and line is not None:
+        if leg.get("team") and _side_of(leg.get("team"), m, sw) in ("Home", "Away"):
+            return None                                   # komandos totalas – kol kas nevertinam
+        w = "Over" if side == "over" else "Under"
+        return "Goals Over/Under", [f"{w} {line:g}", f"{w} {line:.1f}", f"{w} {line:.2f}"]
+    if side == "spread" and line is not None:
+        sd = _side_of(leg.get("team"), m, sw)
+        if sd not in ("Home", "Away"):
+            return None
+        return "Asian Handicap", [f"{sd} {line:+g}", f"{sd} {line:+.1f}", f"{sd} {line:g}"]
+    return None
+
+
+def market_odds(leg):
+    """Ar šį statymą buvo galima pastatyti prieš rungtynes ir už kiek: {"odds": mediana, "best", "book", "n"}.
+    None – rinkos nėra / ne futbolas / nežinoma; {"none": priežastis} – tikrai nerasta."""
+    if not (CFG or {}).get("apisports_key"):
+        return None
+    m, sw, t = _apis_fixture(leg)
+    if not m:
+        return None
+    want = _wanted(leg, m, sw)
+    if not want:
+        return {"none": "rinka netikrinama (ne pagrindinė)"}
+    books = _odds_raw(m["id"])
+    if books is None:
+        return None
+    if not books:
+        return {"none": "bukmekeriai šių rungtynių nesiūlo"}
+    name, vals = want
+    got = []
+    for bk in books:
+        mk = bk["m"].get(name) or {}
+        for v in vals:
+            if v in mk:
+                try:
+                    got.append((float(mk[v]), bk["name"]))
+                except Exception:
+                    pass
+                break
+    if not got:
+        return {"none": f"rinkos „{name} {vals[0]}“ bukmekeriai neturi"}
+    got.sort()
+    med = got[len(got) // 2][0] if len(got) % 2 else round((got[len(got) // 2 - 1][0] + got[len(got) // 2][0]) / 2, 3)
+    ODDS_STATE["last"] = f"ok: {m['h']} – {m['a']} {name} {vals[0]} @ {med}"
+    return {"odds": round(med, 2), "best": got[-1][0], "book": got[-1][1], "n": len(got),
+            "mk": f"{name}: {vals[0]}", "ko": t.isoformat(timespec="minutes") if t else None}
