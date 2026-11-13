@@ -374,6 +374,11 @@ class Auditor:
                         if l["status"] == "unknown":
                             l["status"], l["detail"] = "pending", None
             self.d["settle_ver"] = 6
+        if self.d.get("settle_ver", 0) < 7:          # laukiančius tikrinam iškart naujais būdais
+            for b in self.d["bets"]:
+                if b["status"] == "pending":
+                    b["tries"], b["next"] = 0, 0
+            self.d["settle_ver"] = 7
         self._keys = {(b["c"], b["mid"]) for b in self.d["bets"]}
         self._done, self._last_save, self._sum = [], 0, (0, None)
         self._ocr = False
