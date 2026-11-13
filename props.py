@@ -163,6 +163,7 @@ def _el_game(leg):
     comps = ["U"] if "eurocup" in lg or "europos taur" in lg else ["E"] if re.search(r"euroleag|eurolyg", lg) \
         else ["E", "U"]
     y = k.year if k.month >= 7 else k.year - 1
+    best = None
     for comp in comps:
         try:
             data = _get(f"{EL}/v2/competitions/{comp}/seasons/{comp}{y}/games", ttl=1800)
@@ -173,23 +174,27 @@ def _el_game(leg):
                 start = datetime.fromisoformat(str(g.get("date"))[:16])
             except Exception:
                 continue
-            if not (c - timedelta(hours=6) <= start <= c + timedelta(hours=30)):
+            if not (c - timedelta(hours=8) <= start <= c + timedelta(hours=36)):
                 continue
             n1 = [(g["local"]["club"].get(x)) for x in ("name", "abbreviatedName", "editorialName")]
             n2 = [(g["road"]["club"].get(x)) for x in ("name", "abbreviatedName", "editorialName")]
             ok, _ = _pair(leg, n1, n2)
             if ok:
-                return comp, y, g
-    return None
+                gap = abs((start - k).total_seconds())
+                if best is None or gap < best[0]:
+                    best = (gap, (comp, y, g))
+    return best[1] if best else None
 
 
 def _espn_game(leg, paths):
+    """Tinkamiausios ESPN rungtynės – iš kelių dienų imamos tos, kurių pradžia arčiausiai signalo laiko."""
     k, c = _when(leg)
     for path in paths:
+        best = None
         for d in (k.date(), k.date() - timedelta(days=1), k.date() + timedelta(days=1)):
             extra = "&groups=50" if "college" in path else "&limit=1000" if path == "soccer/all" else ""
+            old = d < (datetime.now() - timedelta(days=2)).date()
             try:
-                old = d < (datetime.now() - timedelta(days=2)).date()
                 data = _get(f"{ESPN}/{path}/scoreboard?dates={d:%Y%m%d}" + (extra or "&limit=400"),
                             ttl=86400 if old else 900)
             except Exception:
@@ -201,8 +206,19 @@ def _espn_game(leg, paths):
                 names = [[(cp.get("team") or {}).get(x) for x in ("displayName", "shortDisplayName", "name", "location",
                                                                    "abbreviation")] for cp in comps]
                 ok, _ = _pair(leg, names[0], names[1])
-                if ok:
-                    return path, ev
+                if not ok:
+                    continue
+                try:
+                    st = datetime.fromisoformat(str(ev.get("date")).replace("Z", "+00:00")).astimezone().replace(tzinfo=None)
+                except Exception:
+                    st = k
+                if not (c - timedelta(hours=8) <= st <= c + timedelta(hours=36)):
+                    continue                              # kitos dienos tų pačių komandų rungtynės
+                gap = abs((st - k).total_seconds())
+                if best is None or gap < best[0]:
+                    best = (gap, ev)
+        if best:
+            return path, best[1]
     return None, None
 
 

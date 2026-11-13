@@ -366,6 +366,14 @@ class Auditor:
             self.d["bf_done"], self.d["oldest"] = {}, {}
             self.d["recollect_ver"] = 1
         self.d.setdefault("err", {})
+        if self.d.get("settle_ver", 0) < 6:          # nauji šaltiniai ir pavadinimai – „nežinomus“ tikrinam iš naujo
+            for b in self.d["bets"]:
+                if b["status"] == "unknown":
+                    b["status"], b["tries"], b["next"] = "pending", 0, 0
+                    for l in b["legs"]:
+                        if l["status"] == "unknown":
+                            l["status"], l["detail"] = "pending", None
+            self.d["settle_ver"] = 6
         self._keys = {(b["c"], b["mid"]) for b in self.d["bets"]}
         self._done, self._last_save, self._sum = [], 0, (0, None)
         self._ocr = False
@@ -740,6 +748,7 @@ class Auditor:
             if b.get("next", 0) > time.time():
                 continue
             n0 = n
+            waiting = 0
             for l in b["legs"]:
                 if l["status"] != "pending":
                     continue
@@ -767,6 +776,8 @@ class Auditor:
                     l.pop("note", None)
                 else:
                     l["note"] = info or "tikrinama"
+                    if "dar vyksta arba neprasidėjo" in (info or ""):
+                        waiting += 1                      # rungtynės dar nesibaigė (pvz. kombo kitos dienos dalis)
             sts = [l["status"] for l in b["legs"]]
             if "lost" in sts:
                 b["status"] = "lost"
@@ -774,6 +785,11 @@ class Auditor:
                 b["status"] = "push" if all(x == "push" for x in sts) else "won"
             elif "pending" not in sts:
                 b["status"] = "unknown"                   # bent viena dalis nepatikrinama – kombo neįskaitom
+            elif waiting and str(b["t"])[:10] >= (now - timedelta(days=4)).strftime("%Y-%m-%d") and waiting == sum(1 for l in b["legs"] if l["status"] == "pending" and l.get("note") and
+                                            "dar vyksta arba neprasidėjo" in l["note"]) and \
+                    all("dar vyksta arba neprasidėjo" in (l.get("note") or "") or l.get("note") == "laukia rungtynių pabaigos"
+                        for l in b["legs"] if l["status"] == "pending"):
+                b["next"] = time.time() + 1800            # LiveScore rodo, kad dar nesibaigė – bandymų neskaičiuojam
             elif n == n0:                                 # rungtynės dar nesibaigė – laukiam, bandymų neskaičiuojam
                 try:
                     b["next"] = min(self._kick(l, b) for l in b["legs"]

@@ -42,7 +42,11 @@ STOP = {"fc", "fk", "sc", "cf", "afc", "club", "the", "cd", "ac", "sk", "bk", "i
         "basket", "basketball", "team", "and"}
 ALIAS = {"psg": "paris saint germain", "man utd": "manchester united", "man city": "manchester city",
          "spurs": "tottenham", "barca": "barcelona", "inter": "inter milan", "juve": "juventus",
-         "bayern": "bayern munich", "bvb": "dortmund", "zalgiris": "zalgiris kaunas", "okc": "oklahoma city thunder", "lal": "los angeles lakers", "rytas": "rytas vilnius"}
+         "bayern": "bayern munich", "bvb": "dortmund", "zalgiris": "zalgiris kaunas", "okc": "oklahoma city thunder", "lal": "los angeles lakers", "rytas": "rytas vilnius",
+         "turkey": "turkiye", "czech republic": "czechia", "czech rep": "czechia", "usa": "united states",
+         "south korea": "korea republic", "korea": "korea republic", "ivory coast": "cote d ivoire",
+         "bosnia": "bosnia and herzegovina", "bosnia herzegovina": "bosnia and herzegovina",
+         "holland": "netherlands", "republic of ireland": "ireland", "dr congo": "congo dr"}
 _cache = {}
 
 
@@ -435,6 +439,16 @@ def settle(b):
         if res is None:
             return None, None, detail
         return res, f"{detail} ({e2['_league']})", "ok"
+    if state(e) in ("ns", "live") and e.get("_start") and e["_start"] < datetime.now() - timedelta(hours=4):
+        try:                                        # LiveScore „įstrigo“ (pvz. OT, nors seniai baigėsi) – kitas šaltinis
+            import props
+            e2 = props.alt_event(b)
+        except Exception:
+            e2 = None
+        if e2:
+            res, detail = evaluate(b, e2)
+            if res is not None:
+                return res, f"{detail} ({e2['_league']}; LiveScore neatnaujino)", "ok"
     res, detail = evaluate(b, e)
     if res is None:
         return None, None, detail
