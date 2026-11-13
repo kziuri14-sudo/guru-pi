@@ -379,7 +379,7 @@ def setup_remote(client):
     async def on_me(ev):
         m = ev.message
         txt = m.message or ""
-        mk = re.match(r"(?is)\s*#pi_key\s+(apifootball|api-football|apisports)\s+(\S+)", txt)
+        mk = re.match(r"(?is)\s*#pi_key\s+(apifootball|api-football|apisports|api-sports|api)\s+(\S+)", txt)
         if mk:                                            # raktas įrašomas tik Raspberry – ne į GitHub
             CFG["apisports_key"] = mk.group(2).strip()
             for path in (BASE / "pi_config.json", BOOT / "pi_config.json"):
@@ -393,8 +393,8 @@ def setup_remote(client):
                 await m.delete()                          # žinutę su raktu ištrinam iš Saved Messages
             except Exception:
                 pass
-            await asyncio.to_thread(ntfy, "🔑 API-Football raktas išsaugotas",
-                                    "Raspberry jį naudos rezultatų paieškai. Žinutė su raktu ištrinta.", None, None, 3)
+            await asyncio.to_thread(ntfy, "🔑 API-Sports raktas išsaugotas",
+                                    "Futbolas, krepšinis, ledo ritulys – Raspberry naudos rezultatų paieškai. Žinutė su raktu ištrinta.", None, None, 3)
             return
         if "#pi_status" in txt:
             try:

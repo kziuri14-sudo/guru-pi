@@ -664,14 +664,21 @@ def sofa_event(leg):
 # ---------------------------------------------------------------- API-Football (api-sports.io) – oficialus API su raktu
 CFG = {}                                              # Raspberry priskiria savo nustatymus (apisports_key)
 CACHE_DIR = None                                      # kur laikyti dienų sąrašus (kad neeikvotume 100 užkl./d.)
-APIS_STATE = {"last": "", "used": 0, "day": ""}
+APIS_STATE = {"last": "", "used": {}, "day": ""}
 
 
-def _apis_day(d):
+APIS = {"soccer": ("https://v3.football.api-sports.io/fixtures", "f"),
+        "basketball": ("https://v1.basketball.api-sports.io/games", "b"),
+        "hockey": ("https://v1.hockey.api-sports.io/games", "h")}
+
+
+def _apis_day(d, sport="soccer"):
+    """Vienos dienos visos rungtynės iš API-Sports (vienas raktas – futbolas, krepšinis, ledo ritulys; po 100 užkl./d.)."""
     key = (CFG or {}).get("apisports_key")
-    if not key:
+    if not key or sport not in APIS:
         return None
-    f = (CACHE_DIR / f"apif_{d:%Y%m%d}.json") if CACHE_DIR else None
+    url, tag = APIS[sport]
+    f = (CACHE_DIR / f"apis_{tag}_{d:%Y%m%d}.json") if CACHE_DIR else None
     old = d < (datetime.now() - timedelta(days=2)).date()
     if f and f.exists() and (old or time.time() - f.stat().st_mtime < 900):
         try:
@@ -680,30 +687,43 @@ def _apis_day(d):
             pass
     today = datetime.now().strftime("%Y-%m-%d")
     if APIS_STATE["day"] != today:
-        APIS_STATE["day"], APIS_STATE["used"] = today, 0
-    if APIS_STATE["used"] >= int((CFG or {}).get("apisports_per_day", 95)):
+        APIS_STATE["day"], APIS_STATE["used"] = today, {}
+    used = APIS_STATE["used"] if isinstance(APIS_STATE["used"], dict) else {}
+    APIS_STATE["used"] = used
+    if used.get(sport, 0) >= int((CFG or {}).get("apisports_per_day", 95)):
         return None
-    req = urllib.request.Request(f"https://v3.football.api-sports.io/fixtures?date={d:%Y-%m-%d}",
+    req = urllib.request.Request(f"{url}?date={d:%Y-%m-%d}&timezone=Europe/Vilnius",
                                  headers={"x-apisports-key": key, "Accept": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             raw = json.loads(r.read().decode("utf-8"))
     except Exception as e:
-        APIS_STATE["last"] = f"klaida {type(e).__name__}"
+        APIS_STATE["last"] = f"{sport}: klaida {type(e).__name__}"
         return None
-    APIS_STATE["used"] += 1
+    used[sport] = used.get(sport, 0) + 1
     if raw.get("errors"):
-        APIS_STATE["last"] = str(raw["errors"])[:200]
+        APIS_STATE["last"] = f"{sport}: " + str(raw["errors"])[:200]
         return None
     out = []
     for x in raw.get("response") or []:
-        fx, tm, sc = x.get("fixture") or {}, x.get("teams") or {}, x.get("score") or {}
-        out.append({"date": fx.get("date"), "st": (fx.get("status") or {}).get("short"),
-                    "h": (tm.get("home") or {}).get("name"), "a": (tm.get("away") or {}).get("name"),
-                    "gh": (x.get("goals") or {}).get("home"), "ga": (x.get("goals") or {}).get("away"),
-                    "ft": sc.get("fulltime"), "ht": sc.get("halftime"),
-                    "lg": f"{(x.get('league') or {}).get('country')} – {(x.get('league') or {}).get('name')}"})
-    APIS_STATE["last"] = f"ok ({len(out)} rungtynių {d:%m-%d})"
+        tm = x.get("teams") or {}
+        lg = x.get("league") or {}
+        if sport == "soccer":
+            fx, sc = x.get("fixture") or {}, x.get("score") or {}
+            out.append({"date": fx.get("date"), "st": (fx.get("status") or {}).get("short"),
+                        "h": (tm.get("home") or {}).get("name"), "a": (tm.get("away") or {}).get("name"),
+                        "gh": (x.get("goals") or {}).get("home"), "ga": (x.get("goals") or {}).get("away"),
+                        "ft": sc.get("fulltime"), "ht": sc.get("halftime"),
+                        "lg": f"{(x.get('league') or {}).get('country')} – {lg.get('name')}"})
+        else:
+            sc = x.get("scores") or {}
+            hs, as_ = sc.get("home"), sc.get("away")
+            if isinstance(hs, dict):
+                hs, as_ = hs.get("total"), (as_ or {}).get("total")
+            out.append({"date": x.get("date"), "st": (x.get("status") or {}).get("short"),
+                        "h": (tm.get("home") or {}).get("name"), "a": (tm.get("away") or {}).get("name"),
+                        "gh": hs, "ga": as_, "lg": f"{(x.get('country') or {}).get('name')} – {lg.get('name')}"})
+    APIS_STATE["last"] = f"{sport}: ok ({len(out)} rungtynių {d:%m-%d})"
     if f:
         try:
             f.write_text(json.dumps(out, ensure_ascii=False), "utf-8")
@@ -713,12 +733,13 @@ def _apis_day(d):
 
 
 def apisports_event(leg):
-    if _sp(leg) not in (None, "soccer") or not (CFG or {}).get("apisports_key"):
+    sport = _sp(leg) or "soccer"
+    if sport not in APIS or not (CFG or {}).get("apisports_key"):
         return None
     k, c = _when(leg)
     best = None
     for d in (k.date(), k.date() - timedelta(days=1), k.date() + timedelta(days=1)):
-        for m in _apis_day(d) or []:
+        for m in _apis_day(d, sport) or []:
             ok, _ = _pair(leg, [m["h"]], [m["a"]])
             if not ok:
                 continue
@@ -735,10 +756,10 @@ def apisports_event(leg):
         return None
     _, m, t = best
     st = str(m.get("st") or "").upper()
-    eps = {"FT": "FT", "AET": "AET", "PEN": "AP", "PST": "POSTP.", "CANC": "CANC.", "ABD": "ABD.", "AWD": "AW.",
-           "WO": "WO"}.get(st, "NS" if st in ("NS", "TBD") else "LIVE")
-    e = {"_t1": m["h"], "_t2": m["a"], "Tr1": m.get("gh"), "Tr2": m.get("ga"), "Eps": eps, "_sport": "soccer",
-         "_league": "API-Football, " + str(m.get("lg") or ""), "_start": t}
+    eps = {"FT": "FT", "AET": "AET", "PEN": "AP", "AOT": "AOT", "AP": "AP", "PST": "POSTP.", "POST": "POSTP.",
+           "CANC": "CANC.", "ABD": "ABD.", "AWD": "AW.", "WO": "WO"}.get(st, "NS" if st in ("NS", "TBD") else "LIVE")
+    e = {"_t1": m["h"], "_t2": m["a"], "Tr1": m.get("gh"), "Tr2": m.get("ga"), "Eps": eps, "_sport": sport,
+         "_league": "API-Sports, " + str(m.get("lg") or ""), "_start": t}
     ft, ht = m.get("ft") or {}, m.get("ht") or {}
     if ft.get("home") is not None and ft.get("away") is not None:
         e["Tr1OR"], e["Tr2OR"] = ft["home"], ft["away"]       # 90 min. rezultatas
