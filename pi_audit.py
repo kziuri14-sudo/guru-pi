@@ -19,6 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 import subprocess
 import time
 import urllib.error
+import unicodedata
 import urllib.request
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -48,6 +49,10 @@ is_bet=true TIK jei siūlomas naujas konkretus statymas prieš rungtynes ar gyva
 pasigyrimas laimėjimu, rezultato pranešimas („✅ win“), jau laimėtas/pralaimėtas kuponas, statistika.
 Lygiosios = side "Win", team "Draw". „Abi įmuš“ = BTTS (pick „Yes“/„No“). „1X“, „X2“, „12“ = DC.
 Komandas rašyk angliškai. NIEKO NESUGALVOK – ko nėra, rašyk null."""
+
+
+def _n(x):
+    return re.sub(r"\W+", "", unicodedata.normalize("NFKC", str(x or "")).lower())
 
 
 def _who(m):
@@ -381,9 +386,20 @@ class Auditor:
                 if b["status"] == "pending":
                     b["tries"], b["next"] = 0, 0
             self.d["settle_ver"] = 7
+        if self.d.get("settle_ver", 0) < 8:          # nauja: paieška internete – „nežinomus“ bandom dar kartą
+            for b in self.d["bets"]:
+                if b["status"] in ("unknown", "pending"):
+                    b["status"], b["tries"], b["next"] = "pending", 0, 0
+                    for l in b["legs"]:
+                        if l["status"] == "unknown":
+                            l["status"], l["detail"] = "pending", None
+            self.d["settle_ver"] = 8
         self._keys = {(b["c"], b["mid"]) for b in self.d["bets"]}
         self._done, self._last_save, self._sum = [], 0, (0, None)
         self._ocr = False
+        results.WEB = self.web_event                      # paskutinis šaltinis – Google paieška
+        if props:
+            props.WEB_STAT = self.web_stat
 
     # ------------------------------------------------------------------ saugojimas
     def _insert(self, items):
@@ -505,14 +521,40 @@ class Auditor:
         today = datetime.now().strftime("%Y-%m-%d")
         if self.d["ai_day"] != today:
             self.d["ai_day"], self.d["ai_used"], self.d["groq_used"] = today, 0, 0
+            self.d["web_used"] = 0
         return self._groq_ok() or self._gem_ok()
 
+    def order(self):
+        """Grupių eilė: pirma GURU G⚽AL (ar nurodytos nustatymuose), tada – kurios turi daugiausia žinučių."""
+        want = [_n(x) for x in (self.cfg.get("audit_first") or ["GURU G", "GuruGoal"])]
+        cnt = dict(self.db.execute("SELECT c, COUNT(*) FROM q WHERE tries<99 GROUP BY c").fetchall())
+        nb = {}
+        for b in self.d["bets"]:
+            nb[b["c"]] = nb.get(b["c"], 0) + 1
+        chats = list(self.d["chats"])
+        first = [c for c in chats if any(w and w in _n(self.d["chats"][c]) for w in want)]
+        rest = sorted((c for c in chats if c not in first), key=lambda c: -(cnt.get(c, 0) + 3 * nb.get(c, 0)))
+        return first + rest, cnt
+
+    def focus(self):
+        od, cnt = self.order()
+        return next((c for c in od if cnt.get(c)), None)
+
     def _batch(self, photos_ok):
-        """Seniausia neišanalizuota žinutė ir paskui ją einančios tos pačios grupės žinutės (kontekstas)."""
+        """Grupės analizuojamos po vieną: kol einamoji grupė neišanalizuota iki galo – kitų neimam.
+        Išimtis – visai naujos (< 2 val.) žinutės: jos imamos iš karto, kad pranešimai ateitų laiku."""
         where = " AND tries<99" + ("" if photos_ok else " AND photo=0")
-        recent = (datetime.now().astimezone() - timedelta(hours=36)).isoformat(timespec="minutes")
-        first = self.db.execute("SELECT c, t FROM q WHERE t>=?" + where + " ORDER BY t, id LIMIT 1", (recent,)).fetchone() \
-            or self.db.execute("SELECT c, t FROM q WHERE 1=1" + where + " ORDER BY t, id LIMIT 1").fetchone()
+        recent = (datetime.now().astimezone() - timedelta(hours=2)).isoformat(timespec="minutes")
+        first = self.db.execute("SELECT c, t FROM q WHERE t>=?" + where + " ORDER BY t, id LIMIT 1", (recent,)).fetchone()
+        if not first:
+            od, cnt = self.order()
+            for c in od:
+                if not cnt.get(c):
+                    continue
+                first = self.db.execute("SELECT c, t FROM q WHERE c=?" + where + " ORDER BY t, id LIMIT 1", (c,)).fetchone()
+                if first or photos_ok:
+                    break                                 # einamoji grupė – kitų neliečiam
+                # nuotraukų dabar nėra kuo skaityti – kol kas imam kitos grupės tekstą
         if not first:
             return []
         rows = self.db.execute("SELECT c, id, t, txt, photo, u, un, tries FROM q WHERE c=? AND t>=?" + where +
@@ -564,6 +606,103 @@ class Auditor:
             except Exception as e:
                 self._err(f"gemini: {type(e).__name__} {str(e)[:80]}")
         return None
+
+    WEB_PROMPT = """Surask internete OFICIALŲ GALUTINĮ rungtynių rezultatą.
+Rungtynės: {home} – {away}. Sportas: {sport}. Lyga/turnyras: {league}. Data: apie {date} (gali būti ±1 d.).
+Grąžink TIK JSON:
+{{"found": true/false, "home": "namų komanda kaip šaltinyje", "away": "svečių komanda kaip šaltinyje",
+ "date": "YYYY-MM-DD", "status": "finished/postponed/cancelled/not_played/live",
+ "home_score": sveikas sk., "away_score": sveikas sk.,
+ "regular_home": pagrindinio laiko rezultatas (be pratęsimo) arba null, "regular_away": ... arba null,
+ "ht_home": kėlinio/pirmo kėlinio rezultatas arba null, "ht_away": ... arba null,
+ "source": "šaltinio adresas"}}
+Jei patikimo šaltinio neradai arba nesi tikras, kad tai tos pačios rungtynės – {{"found": false}}. NIEKO NESUGALVOK."""
+
+    WEB_STAT_PROMPT = """Surask internete rungtynių {home} – {away} ({sport}, {league}, apie {date}) oficialią statistiką.
+Reikia: {what}. Grąžink TIK JSON: {{"found": true/false, "value": skaičius, "played": true/false, "source": "adresas"}}
+Jei žaidėjas nežaidė – "played": false. Jei patikimo šaltinio neradai – {{"found": false}}. NIEKO NESUGALVOK."""
+
+    def _web(self, prompt):
+        """Gemini su Google paieška – paskutinis šaltinis, kai LiveScore/ESPN/EuroLeague neturi."""
+        if not self.cfg.get("gemini_key") or self.d.get("web_used", 0) >= int(self.cfg.get("audit_web_per_day", 300)):
+            return None
+        if time.time() < self.d.get("web_pause", 0):
+            return None
+        body = json.dumps({"contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                           "tools": [{"google_search": {}}], "generationConfig": {"temperature": 0}}).encode()
+        for model in (self.cfg.get("gemini_web_models") or ["gemini-3.5-flash", "gemini-3.5-flash-lite"]):
+            req = urllib.request.Request(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent", data=body,
+                method="POST", headers={"Content-Type": "application/json", "x-goog-api-key": self.cfg["gemini_key"]})
+            try:
+                with urllib.request.urlopen(req, timeout=120) as r:
+                    d = json.loads(r.read().decode())
+                self.d["web_used"] = self.d.get("web_used", 0) + 1
+                cand = (d.get("candidates") or [{}])[0]
+                if not ((cand.get("groundingMetadata") or {}).get("groundingChunks")):
+                    return None                            # be tikro šaltinio internete – nepasitikim
+                txt = "".join(p.get("text", "") for p in (cand.get("content") or {}).get("parts") or []
+                              if not p.get("thought"))
+                return _parse_json_any(txt)
+            except urllib.error.HTTPError as e:
+                if e.code == 429:
+                    self.d["web_pause"] = time.time() + 1800
+                    self._err("web 429")
+                    return None
+                self._err(f"web {e.code}")
+            except Exception as e:
+                self._err(f"web: {type(e).__name__}")
+        return None
+
+    def web_event(self, leg):
+        """Rezultatas iš interneto (Google) – LiveScore formatu, kad įvertintų tas pats results.evaluate."""
+        key = f"{_n(leg.get('home'))}|{_n(leg.get('away'))}|{str(leg.get('kickoff'))[:10]}"
+        cache = self.d.setdefault("web_cache", {})
+        hit = cache.get(key)
+        if hit and (hit.get("found") or time.time() - hit.get("ts", 0) < 6 * 3600):
+            r = hit
+        else:
+            r = self._web(self.WEB_PROMPT.format(home=leg.get("home"), away=leg.get("away") or "?",
+                                                 sport=leg.get("sport") or "?", league=leg.get("league") or "?",
+                                                 date=str(leg.get("kickoff"))[:10])) or {"found": False}
+            r["ts"] = time.time()
+            cache[key] = r
+            if len(cache) > 3000:
+                cache.pop(next(iter(cache)))
+        if not r.get("found"):
+            return None
+        try:
+            k = datetime.fromisoformat(str(leg.get("kickoff"))[:16])
+            d = datetime.fromisoformat(str(r.get("date"))[:10])
+            if abs((d.date() - k.date()).days) > 1:
+                return None                                 # kitos dienos rungtynės
+            if not (results.same(leg.get("home"), r.get("home")) or results.same(leg.get("home"), r.get("away"))):
+                return None
+            st = str(r.get("status") or "").lower()
+            e = {"_t1": r.get("home"), "_t2": r.get("away"), "Eps": "FT" if st == "finished" else
+                 "POSTP." if st in ("postponed", "cancelled") else "NS",
+                 "Tr1": int(r["home_score"]) if r.get("home_score") is not None else None,
+                 "Tr2": int(r["away_score"]) if r.get("away_score") is not None else None,
+                 "_sport": results.ls_sport(leg) or "soccer", "_league": "Google paieška: " + str(r.get("source") or "")[:60],
+                 "_start": k}
+            if r.get("regular_home") is not None and r.get("regular_away") is not None:
+                e["Tr1OR"], e["Tr2OR"] = int(r["regular_home"]), int(r["regular_away"])
+            if r.get("ht_home") is not None and r.get("ht_away") is not None:
+                e["Trh1"], e["Trh2"] = int(r["ht_home"]), int(r["ht_away"])
+            if e["Tr1"] is not None and e["Tr2"] is not None:
+                e["Ewt"] = 1 if e["Tr1"] > e["Tr2"] else 2 if e["Tr2"] > e["Tr1"] else None
+            h, a = leg.get("home"), leg.get("away")
+            e["_swapped"] = (results.mscore(h, e["_t2"]) + results.mscore(a, e["_t1"])) > \
+                (results.mscore(h, e["_t1"]) + results.mscore(a, e["_t2"]))
+            return e
+        except Exception:
+            return None
+
+    def web_stat(self, leg, what):
+        r = self._web(self.WEB_STAT_PROMPT.format(home=leg.get("home"), away=leg.get("away") or "?",
+                                                  sport=leg.get("sport") or "?", league=leg.get("league") or "?",
+                                                  date=str(leg.get("kickoff"))[:10], what=what))
+        return r if r and r.get("found") else None
 
     def _err(self, what):
         e = self.d.setdefault("err", {})
@@ -762,7 +901,10 @@ class Auditor:
     def settle_some(self, limit=60):
         now = datetime.now()
         todo, picked = [], []
-        for b in list(reversed(self.d["bets"])):          # naujausi pirmi – šviežūs rezultatai greičiau
+        od, _ = self.order()
+        rank = {c: i for i, c in enumerate(od)}
+        bets = sorted(self.d["bets"], key=lambda x: (rank.get(x["c"], 999), str(x["t"])), reverse=False)
+        for b in bets:                                    # grupės eilės tvarka (pirma GURU G⚽AL)
             if b["status"] != "pending" or len(todo) >= limit or b.get("next", 0) > time.time():
                 continue
             picked.append(b)
@@ -864,6 +1006,11 @@ class Auditor:
                 ser.append([d, round(cum, 2)])
             g["series"] = ser
             groups.append(g)
+        od, cnt = self.order()
+        fc = next((c for c in od if cnt.get(c)), None)
+        for g in groups:
+            g["q"] = cnt.get(g["cid"], 0)
+            g["state"] = "analizuojama" if g["cid"] == fc else ("eilėje" if g["q"] else "išanalizuota")
         groups.sort(key=lambda g: (g["proven"], g["n_odds"] >= 15,
                                    g["roi_low"] if g["roi_low"] is not None else -999), reverse=True)
         tot = _stats(bets)
@@ -915,7 +1062,8 @@ class Auditor:
                                      "k": str(self._kick(l, b))[5:16]} for l in b["legs"][:6]]})
         return {"groups": groups, "total": tot, "series": series, "hours": hours, "sides": sides, "sports": sports,
                 "odds": oddsb, "recent": recent, "chats": len(chats), "queue": self.qlen(), "queue_photo": self.qlen(True),
-                "backfill_left": self.backfill_left(),
+                "backfill_left": self.backfill_left(), "focus": self.d["chats"].get(fc, "") if fc else "",
+                "web_used": self.d.get("web_used", 0),
                 "done_msgs": self.d["done_msgs"], "ai_used": self.d["ai_used"] + self.d.get("groq_used", 0),
                 "ai_cap": self.cap + (self.gcap if self.cfg.get("groq_key") else 0),
                 "groq_used": self.d.get("groq_used", 0), "gemini_used": self.d["ai_used"],

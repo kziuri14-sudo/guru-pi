@@ -48,6 +48,7 @@ ALIAS = {"psg": "paris saint germain", "man utd": "manchester united", "man city
          "bosnia": "bosnia and herzegovina", "bosnia herzegovina": "bosnia and herzegovina",
          "holland": "netherlands", "republic of ireland": "ireland", "dr congo": "congo dr"}
 _cache = {}
+WEB = None          # Raspberry priskiria: paieška internete (Google), kai kiti šaltiniai neturi
 
 
 def _fold(s):
@@ -433,8 +434,15 @@ def settle(b):
             e2 = props.alt_event(b)
         except Exception:
             e2 = None
+        if not e2 and WEB:
+            try:
+                e2 = WEB(b)
+            except Exception:
+                e2 = None
         if not e2:
-            return None, None, "rungtynių nerado nei LiveScore, nei ESPN/EuroLeague"
+            return None, None, "rungtynių nerado nei LiveScore, nei ESPN/EuroLeague, nei paieška internete"
+        if state(e2) != "done" and state(e2) != "void":
+            return None, None, f"internete: rungtynės dar nesibaigė ar nevyko ({e2.get('Eps')})"
         res, detail = evaluate(b, e2)
         if res is None:
             return None, None, detail
@@ -445,7 +453,12 @@ def settle(b):
             e2 = props.alt_event(b)
         except Exception:
             e2 = None
-        if e2:
+        if not e2 and WEB:
+            try:
+                e2 = WEB(b)
+            except Exception:
+                e2 = None
+        if e2 and state(e2) in ("done", "void"):
             res, detail = evaluate(b, e2)
             if res is not None:
                 return res, f"{detail} ({e2['_league']}; LiveScore neatnaujino)", "ok"
@@ -459,7 +472,17 @@ def settle(b):
             ok = props.cross_check(b, e)
         except Exception:
             ok = None
+    if ok is False and WEB:                         # šaltiniai nesutaria – sprendžia trečias (internetas)
+        try:
+            w = WEB(b)
+        except Exception:
+            w = None
+        if w and state(w) == "done" and w.get("Tr1") is not None:
+            s1, s2 = _scores(e, "Tr1", "Tr2")
+            o1, o2 = (w["Tr2"], w["Tr1"]) if (mscore(e["_t1"], w["_t2"]) > mscore(e["_t1"], w["_t1"])) else (w["Tr1"], w["Tr2"])
+            if (s1, s2) == (o1, o2):
+                ok = True
     if ok is False:
-        return None, None, "LiveScore ir ESPN/EuroLeague rezultatai nesutampa – neįskaitom, tikrinsim vėliau"
+        return None, None, "LiveScore ir ESPN/EuroLeague rezultatai nesutampa (ir internetas nepatvirtino) – tikrinsim vėliau"
     src = "LiveScore + " + ("patvirtinta antro šaltinio" if ok else "vienas šaltinis")
     return res, f"{detail} ({src}, {e['_league']})", "ok"

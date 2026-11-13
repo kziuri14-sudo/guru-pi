@@ -344,7 +344,58 @@ def is_prop(leg):
     return bool(R.PLAYER_RE.search(t))
 
 
+WEB_STAT = None                                   # Raspberry priskiria: statistika iš interneto (Google)
+LAB = {"pts": "taškai", "reb": "atkovoti kamuoliai", "ast": "rezultatyvūs perdavimai", "stl": "perimti kamuoliai",
+       "blk": "blokai", "3pm": "pataikyti tritaškiai"}
+
+
+def _web_prop(leg):
+    t = _fold(f"{leg.get('pick')} {leg.get('market') or ''}")
+    line, side = _line(leg, leg.get("pick") or "")
+    if line is None or side is None:
+        return None
+    if CORNER_RE.search(t) or CARD_RE.search(t) or SHOTS_RE.search(t):
+        lab = "kampinių" if CORNER_RE.search(t) else "kortelių (geltonos + raudonos)" if CARD_RE.search(t) else \
+            "smūgių į vartus" if SHOT_RE.search(t) else "smūgių"
+        team = leg.get("team")
+        who = f"komandos {team}" if team and _fold(team) not in ("total", "over", "under") else "abiejų komandų bendras"
+        what = f"{who} {lab} skaičius per visas rungtynes (be pratęsimo)"
+    else:
+        keys = _stat_keys(leg.get("pick") or "")
+        if keys is None:
+            return None
+        keys = keys or (["pts"] if line >= 7.5 else None)
+        if not keys:
+            return None
+        what = f"žaidėjo iš statymo „{leg.get('subject') or leg.get('pick')}“: " + " + ".join(LAB[k] for k in keys) + \
+            " (jei kelios – sudėk į vieną skaičių)"
+    r = WEB_STAT(leg, what)
+    if not r:
+        return None
+    if r.get("played") is False:
+        return "push", f"žaidėjas nežaidė – grąžinama (internetas: {str(r.get('source'))[:60]})", "ok"
+    try:
+        v = float(r["value"])
+    except Exception:
+        return None
+    res = "push" if v == line else ("won" if (v > line) == (side == "Over") else "lost")
+    return res, f"{what.split(':')[0]}: {v:g} ({'daugiau' if side == 'Over' else 'mažiau'} {line:g}) – internetas: " \
+        f"{str(r.get('source'))[:60]}", "ok"
+
+
 def settle(leg):
+    res = _settle(leg)
+    if res[0] is None and WEB_STAT and re.search(r"nerast|nerado|nepasiekiamas", res[2] or ""):
+        try:
+            w = _web_prop(leg)
+        except Exception:
+            w = None
+        if w:
+            return w
+    return res
+
+
+def _settle(leg):
     """(status, detail, info) kaip results.settle; status None – nepavyko."""
     t = _fold(f"{leg.get('pick')} {leg.get('market') or ''}")
     try:
