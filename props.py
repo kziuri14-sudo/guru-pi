@@ -176,7 +176,7 @@ def _el_game(leg):
                 start = datetime.fromisoformat(str(g.get("date"))[:16])
             except Exception:
                 continue
-            if not (c - timedelta(hours=8) <= start <= c + timedelta(hours=36)):
+            if not (c - timedelta(hours=30) <= start <= c + timedelta(hours=36)):
                 continue
             n1 = [(g["local"]["club"].get(x)) for x in ("name", "abbreviatedName", "editorialName")]
             n2 = [(g["road"]["club"].get(x)) for x in ("name", "abbreviatedName", "editorialName")]
@@ -214,7 +214,7 @@ def _espn_game(leg, paths):
                     st = datetime.fromisoformat(str(ev.get("date")).replace("Z", "+00:00")).astimezone().replace(tzinfo=None)
                 except Exception:
                     st = k
-                if not (c - timedelta(hours=8) <= st <= c + timedelta(hours=36)):
+                if not (c - timedelta(hours=30) <= st <= c + timedelta(hours=36)):
                     continue                              # kitos dienos tų pačių komandų rungtynės
                 gap = abs((st - k).total_seconds())
                 if best is None or gap < best[0]:
@@ -542,7 +542,7 @@ def fotmob_event(leg):
                     t = datetime.fromisoformat(str(st.get("utcTime")).replace("Z", "+00:00")).astimezone().replace(tzinfo=None)
                 except Exception:
                     continue
-                if not (c - timedelta(hours=8) <= t <= c + timedelta(hours=36)):
+                if not (c - timedelta(hours=30) <= t <= c + timedelta(hours=36)):
                     continue
                 gap = abs((t - k).total_seconds())
                 if best is None or gap < best[0]:
@@ -633,7 +633,7 @@ def sofa_event(leg):
                 t = datetime.fromtimestamp(int(ev.get("startTimestamp")))
             except Exception:
                 continue
-            if not (c - timedelta(hours=8) <= t <= c + timedelta(hours=36)):
+            if not (c - timedelta(hours=30) <= t <= c + timedelta(hours=36)):
                 continue
             gap = abs((t - k).total_seconds())
             if best is None or gap < best[0]:

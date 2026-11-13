@@ -86,6 +86,8 @@ def _stats(bets):
             continue
         if st == "unknown":
             r["unk"] += 1
+            if any("ne prognozė" in (l.get("detail") or "") for l in b.get("legs") or []):
+                r["late"] = r.get("late", 0) + 1          # „prognozė“ paskelbta po rungtynių
             continue
         r["n"] += 1
         r[{"won": "w", "lost": "l"}.get(st, "p")] += 1
@@ -932,7 +934,7 @@ Jei žaidėjas nežaidė – "played": false. Jei patikimo šaltinio neradai –
         return t
 
     FINAL = re.compile(r"neskaičiuojam|neįvertina|procentin|kombinuotas|neaišku|nežinoma rinka|nėra linijos|"
-                       r"nepalaikoma|ne rungtynių komanda")
+                       r"nepalaikoma|ne rungtynių komanda|ne prognozė")
 
     @staticmethod
     def _check_leg(l, k):

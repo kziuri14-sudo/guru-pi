@@ -170,7 +170,7 @@ def find(b):
     sports = [sp] + [s for s in ALL if s != sp] if sp else list(ALL)
     best = None
     for sport in sports:
-        first, last = (min(ref, created) - timedelta(hours=5)).date(), (created + timedelta(hours=30)).date()
+        first, last = (min(ref, created) - timedelta(hours=30)).date(), (created + timedelta(hours=30)).date()
         days = sorted({first + timedelta(days=i) for i in range((last - first).days + 1)},
                       key=lambda d: abs((d - ref.date()).days))
         for d in days:
@@ -196,8 +196,8 @@ def find(b):
                 ev_w = bool(re.search(r"(?i)(\bW\b|women|female|ladies|\(w\))", f"{e['_t1']} {e['_t2']} {e['_league']}"))
                 if b.get("women") is True and not ev_w or b.get("women") is False and ev_w:
                     continue                             # vyrų statymas ≠ moterų rungtynės (ir atvirkščiai)
-                # statoma prieš rungtynes arba jų metu: pradžia ne vėliau kaip 30 h po signalo, ne anksčiau kaip 5 h prieš
-                if not (created - timedelta(hours=5) <= e["_start"] <= created + timedelta(hours=30)):
+                # ieškom ir anksčiau prasidėjusių – kad pagautume „prognozes“, paskelbtas jau po rungtynių
+                if not (created - timedelta(hours=30) <= e["_start"] <= created + timedelta(hours=30)):
                     continue
                 score = abs((e["_start"] - ref).total_seconds()) / 3600 + _penalty(b, e) + \
                     (0 if sport == sports[0] else 2) + (0 if away else 1)
@@ -438,8 +438,25 @@ def evaluate(b, e):
     return None, "šios rinkos LiveScore neįvertina"
 
 
+LATE = "paskelbta jau pasibaigus rungtynėms – ne prognozė, neįskaitoma"
+
+
+def late(b, e):
+    """Statymas paskelbtas, kai rungtynės jau buvo pasibaigusios (grupės kartais „prognozuoja“ atgaline data)."""
+    try:
+        created = datetime.fromisoformat(str(b.get("created") or b.get("kickoff"))[:16])
+        return e.get("_start") is not None and e["_start"] + timedelta(hours=2, minutes=15) < created
+    except Exception:
+        return False
+
+
 def settle(b):
     """(status, detail, info) – status None, jei nepavyko (info paaiškina kodėl)."""
+    res = _settle(b)
+    return res
+
+
+def _settle(b):
     e = find(b)
     if not e:
         try:
@@ -454,12 +471,16 @@ def settle(b):
                 e2 = None
         if not e2:
             return None, None, "rungtynių nerado nei LiveScore, ESPN/EuroLeague, FotMob, SofaScore, nei paieška internete"
+        if late(b, e2):
+            return None, None, LATE
         if state(e2) != "done" and state(e2) != "void":
             return None, None, f"internete: rungtynės dar nesibaigė ar nevyko ({e2.get('Eps')})"
         res, detail = evaluate(b, e2)
         if res is None:
             return None, None, detail
         return res, f"{detail} ({e2['_league']})", "ok"
+    if late(b, e):
+        return None, None, LATE
     if state(e) in ("ns", "live") and e.get("_start") and e["_start"] < datetime.now() - timedelta(hours=4):
         try:                                        # LiveScore „įstrigo“ (pvz. OT, nors seniai baigėsi) – kitas šaltinis
             import props
