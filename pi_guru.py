@@ -386,6 +386,11 @@ def setup_remote(client):
                 tail = [f"žurnalo nėra: {e}"]
             await asyncio.to_thread(ntfy, "ℹ️ Raspberry būsena", "\n".join(tail)[-3500:], None, None, 1)
             return
+        if re.search(r"(?i)#pi_?(github|git|atnaujink|update)\b", txt) and not m.file:
+            GH_NOW.set()                              # „#pi_github“ – tikrinti GitHub iškart
+            await asyncio.to_thread(ntfy, "🔎 Raspberry tikrina GitHub", "Jei yra naujų failų – atsinaujins per minutę.",
+                                    None, None, 2)
+            return
         if "#pi_update" not in txt:
             # TESTAS: persiųsta žinutė (pvz. iš GURU G⚽AL) arba žinutė/nuotrauka su #test
             if getattr(m, "fwd_from", None) or "#test" in txt.lower():
@@ -961,10 +966,14 @@ def _fetch_update(name="pi_guru.py"):
         return None
 
 
+GH_NOW = asyncio.Event()
+
+
 async def github_updater():
-    """Kas 10 min. patikrina GitHub. Nauja versija priimama tik jei ji sukompiliuojama."""
-    await asyncio.sleep(90)
+    """Kas 5 min. (arba iškart po „#pi_github“ Saved Messages) patikrina GitHub. Priimama tik sukompiliuojama versija."""
+    await asyncio.sleep(60)
     while True:
+        GH_NOW.clear()
         changed = []
         for name in UPDATE_FILES:
             data = await asyncio.to_thread(_fetch_update, name)
@@ -996,7 +1005,10 @@ async def github_updater():
                 pass
             await asyncio.sleep(3)
             os._exit(0)
-        await asyncio.sleep(600)
+        try:
+            await asyncio.wait_for(GH_NOW.wait(), timeout=300)
+        except asyncio.TimeoutError:
+            pass
 
 
 AUDIT = {"a": None}
