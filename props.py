@@ -690,6 +690,9 @@ def _apis_day(d, sport="soccer"):
         APIS_STATE["day"], APIS_STATE["used"] = today, {}
     used = APIS_STATE["used"] if isinstance(APIS_STATE["used"], dict) else {}
     APIS_STATE["used"] = used
+    rng = APIS_STATE.get("range", {}).get(sport)          # nemokamas planas: tik vakar–rytoj
+    if rng and not (rng[0] <= d.isoformat() <= rng[1]) and d < datetime.now().date():
+        return None
     if used.get(sport, 0) >= int((CFG or {}).get("apisports_per_day", 95)):
         return None
     req = urllib.request.Request(f"{url}?date={d:%Y-%m-%d}&timezone=Europe/Vilnius",
@@ -702,7 +705,11 @@ def _apis_day(d, sport="soccer"):
         return None
     used[sport] = used.get(sport, 0) + 1
     if raw.get("errors"):
-        APIS_STATE["last"] = f"{sport}: " + str(raw["errors"])[:200]
+        msg = str(raw["errors"])
+        APIS_STATE["last"] = f"{sport}: " + msg[:200]
+        m = re.search(r"from (\d{4}-\d\d-\d\d) to (\d{4}-\d\d-\d\d)", msg)
+        if m:
+            APIS_STATE.setdefault("range", {})[sport] = (m.group(1), m.group(2))
         return None
     out = []
     for x in raw.get("response") or []:
@@ -770,3 +777,23 @@ def apisports_event(leg):
     h, a = leg.get("home"), leg.get("away")
     e["_swapped"] = (R.mscore(h, e["_t2"]) + R.mscore(a, e["_t1"])) > (R.mscore(h, e["_t1"]) + R.mscore(a, e["_t2"]))
     return e
+
+
+def apis_prefetch():
+    """Kas valandą: vakar ir šiandien – visų rungtynių sąrašai išsaugomi diske visam laikui
+    (nemokamas planas leidžia tik paskutines dienas, todėl renkam iš anksto)."""
+    if not (CFG or {}).get("apisports_key"):
+        return
+    now = datetime.now()
+    for sport in APIS:
+        for d in ((now - timedelta(days=1)).date(), now.date()):
+            f = (CACHE_DIR / f"apis_{APIS[sport][1]}_{d:%Y%m%d}.json") if CACHE_DIR else None
+            if f and f.exists() and time.time() - f.stat().st_mtime < 3000:
+                continue
+            if f and f.exists():
+                f.touch(exist_ok=True)
+                try:
+                    f.unlink()                            # pasenusi diena – parsisiunčiam iš naujo
+                except Exception:
+                    pass
+            _apis_day(d, sport)

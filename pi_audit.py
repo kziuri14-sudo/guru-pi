@@ -1129,7 +1129,14 @@ Jei žaidėjas nežaidė – "played": false. Jei patikimo šaltinio neradai –
     # ------------------------------------------------------------------ amžinas ciklas
     async def settle_loop(self):
         """Rezultatai tikrinami atskirai nuo žinučių analizės – nelaukia nuotraukų eilės."""
+        last_pf = 0
         while True:
+            if props and time.time() - last_pf > 3600:
+                last_pf = time.time()
+                try:
+                    await asyncio.to_thread(props.apis_prefetch)
+                except Exception as e:
+                    self._err(f"api-sports: {e}")
             try:
                 await asyncio.to_thread(self.settle_some)
                 self.save()
