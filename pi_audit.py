@@ -394,6 +394,14 @@ class Auditor:
                         if l["status"] == "unknown":
                             l["status"], l["detail"] = "pending", None
             self.d["settle_ver"] = 8
+        if self.d.get("settle_ver", 0) < 9:          # FotMob, DNB, „sausai“ – tikrinam iš naujo
+            for b in self.d["bets"]:
+                if b["status"] in ("unknown", "pending"):
+                    b["status"], b["tries"], b["next"] = "pending", 0, 0
+                    for l in b["legs"]:
+                        if l["status"] == "unknown":
+                            l["status"], l["detail"] = "pending", None
+            self.d["settle_ver"] = 9
         self._keys = {(b["c"], b["mid"]) for b in self.d["bets"]}
         self._done, self._last_save, self._sum = [], 0, (0, None)
         self._ocr = False
@@ -627,6 +635,8 @@ Jei žaidėjas nežaidė – "played": false. Jei patikimo šaltinio neradai –
         key = self.cfg.get("groq_key")
         if not key or time.time() < self.d.get("gweb_pause", 0):
             return None
+        if self.d.get("gweb_none", 0) > time.time():
+            return None                                   # šio rakto Groq paieškos modelio nėra
         _groq_models(key, False, self.cfg, self.log)
         ids = [m for m in _GROQ_M["ids"] if "compound" in m] or ["groq/compound", "groq/compound-mini"]
         for model in ids[:2]:
@@ -648,6 +658,8 @@ Jei žaidėjas nežaidė – "played": false. Jei patikimo šaltinio neradai –
             except urllib.error.HTTPError as e:
                 if e.code == 429:
                     self.d["gweb_pause"] = time.time() + 120
+                elif e.code in (403, 404):
+                    self.d["gweb_none"] = time.time() + 86400
                 self._err(f"web groq {e.code}")
             except Exception as e:
                 self._err(f"web groq: {type(e).__name__}")
@@ -684,7 +696,7 @@ Jei žaidėjas nežaidė – "played": false. Jei patikimo šaltinio neradai –
                 if e.code == 429:
                     day = "PerDay" in eb or "per day" in eb.lower()
                     self.d["web_pause"] = time.time() + (3 * 3600 if day else 90)
-                    self._err("web 429" + (" (dienos)" if day else ""))
+                    self._err("web 429 " + model + ": " + re.sub(r"\s+", " ", eb)[:160])
                     return self._web_groq(prompt)
                 self._err(f"web {e.code}: " + re.sub(r"\s+", " ", eb)[:80])
             except Exception as e:

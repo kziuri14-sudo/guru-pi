@@ -511,3 +511,58 @@ def alt_event(leg):
     h, a = leg.get("home"), leg.get("away")
     sw = (R.mscore(h, e["_t2"]) + R.mscore(a, e["_t1"])) > (R.mscore(h, e["_t1"]) + R.mscore(a, e["_t2"]))
     return dict(e, _swapped=sw)
+
+
+# ---------------------------------------------------------------- FotMob – labai daug futbolo lygų (jaunimo, rezervų, žemesnių)
+FOTMOB = "https://www.fotmob.com/api/data/matches?date={d:%Y%m%d}&timezone=Europe%2FVilnius&ccode3=LTU"
+
+
+def fotmob_event(leg):
+    """Futbolo rungtynės iš FotMob dienos sąrašo LiveScore formatu (None – nerado ar nesibaigė tvarkingai)."""
+    if _sp(leg) not in (None, "soccer"):
+        return None
+    k, c = _when(leg)
+    best = None
+    for d in (k.date(), k.date() - timedelta(days=1), k.date() + timedelta(days=1)):
+        old = d < (datetime.now() - timedelta(days=2)).date()
+        try:
+            data = _get(FOTMOB.format(d=d), ttl=86400 if old else 600)
+        except Exception:
+            continue
+        for L in data.get("leagues") or []:
+            for m in L.get("matches") or []:
+                h, a = m.get("home") or {}, m.get("away") or {}
+                ok, _ = _pair(leg, [h.get("name"), h.get("shortName")], [a.get("name"), a.get("shortName")])
+                if not ok:
+                    continue
+                st = m.get("status") or {}
+                try:
+                    t = datetime.fromisoformat(str(st.get("utcTime")).replace("Z", "+00:00")).astimezone().replace(tzinfo=None)
+                except Exception:
+                    continue
+                if not (c - timedelta(hours=8) <= t <= c + timedelta(hours=36)):
+                    continue
+                gap = abs((t - k).total_seconds())
+                if best is None or gap < best[0]:
+                    best = (gap, m, t, L.get("name"))
+    if not best:
+        return None
+    _, m, t, lname = best
+    st = m.get("status") or {}
+    short = str(((st.get("reason") or {}).get("short")) or "").upper()
+    if st.get("cancelled") or "CANC" in short or "PP" == short or "POSTP" in short:
+        eps = "POSTP."
+    elif st.get("finished") and short in ("FT", ""):
+        eps = "FT"
+    elif st.get("finished"):
+        return None                                       # AET / Pen – 90 min. rezultato sąraše nėra
+    else:
+        eps = "NS"
+    e = {"_t1": (m.get("home") or {}).get("name"), "_t2": (m.get("away") or {}).get("name"),
+         "Tr1": (m.get("home") or {}).get("score"), "Tr2": (m.get("away") or {}).get("score"), "Eps": eps,
+         "_sport": "soccer", "_league": f"FotMob, {lname}", "_start": t}
+    if e["Tr1"] is not None and e["Tr2"] is not None:
+        e["Ewt"] = 1 if e["Tr1"] > e["Tr2"] else 2 if e["Tr2"] > e["Tr1"] else None
+    h, a = leg.get("home"), leg.get("away")
+    e["_swapped"] = (R.mscore(h, e["_t2"]) + R.mscore(a, e["_t1"])) > (R.mscore(h, e["_t1"]) + R.mscore(a, e["_t2"]))
+    return e

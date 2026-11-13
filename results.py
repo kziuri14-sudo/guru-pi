@@ -335,6 +335,15 @@ def evaluate(b, e):
     elif side in ("Win", "Spread") and b.get("away"):          # komandos nėra – žiūrim, kuri minima statyme
         if same(b["away"], b.get("pick") or "") and not same(b.get("home") or "", b.get("pick") or ""):
             mine_home = False
+    if re.search(r"\bdnb\b|draw no bet|lygiosios\W{0,3}grazin|be lygiuju|lygiuju atveju grazin", pick) and \
+            side not in ("Over", "Under", "BTTS", "DC"):
+        side, line = "Spread", 0.0                         # DNB = fora 0: lygiosios – statymas grąžinamas
+    if re.search(r"win\w* to nil|laimes? sausai|laimes? be praleist|pergale sausai", pick) and mine_home is not None:
+        mine, oth = (hs, as_) if mine_home else (as_, hs)
+        hit = mine > oth and oth == 0
+        if re.search(r"(\bno\b|\bne\b)\s*$", pick):
+            hit = not hit
+        return ("won" if hit else "lost"), f"rezultatas {shown}{extra} → pergalė „sausai“: {'taip' if mine > oth and oth == 0 else 'ne'}"
     sets = _tennis_sets(e) if sp == "tennis" else []
     tennis_unit = sp == "tennis" and period == "ft"
 
@@ -430,8 +439,8 @@ def settle(b):
     e = find(b)
     if not e:
         try:
-            import props                            # LiveScore neturi – ESPN / EuroLeague
-            e2 = props.alt_event(b)
+            import props                            # LiveScore neturi – ESPN / EuroLeague / FotMob
+            e2 = props.alt_event(b) or props.fotmob_event(b)
         except Exception:
             e2 = None
         if not e2 and WEB:
@@ -440,7 +449,7 @@ def settle(b):
             except Exception:
                 e2 = None
         if not e2:
-            return None, None, "rungtynių nerado nei LiveScore, nei ESPN/EuroLeague, nei paieška internete"
+            return None, None, "rungtynių nerado nei LiveScore, nei ESPN/EuroLeague/FotMob, nei paieška internete"
         if state(e2) != "done" and state(e2) != "void":
             return None, None, f"internete: rungtynės dar nesibaigė ar nevyko ({e2.get('Eps')})"
         res, detail = evaluate(b, e2)
@@ -450,7 +459,7 @@ def settle(b):
     if state(e) in ("ns", "live") and e.get("_start") and e["_start"] < datetime.now() - timedelta(hours=4):
         try:                                        # LiveScore „įstrigo“ (pvz. OT, nors seniai baigėsi) – kitas šaltinis
             import props
-            e2 = props.alt_event(b)
+            e2 = props.alt_event(b) or props.fotmob_event(b)
         except Exception:
             e2 = None
         if not e2 and WEB:
