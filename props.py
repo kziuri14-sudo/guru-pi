@@ -797,3 +797,66 @@ def apis_prefetch():
                 except Exception:
                     pass
             _apis_day(d, sport)
+
+
+# ---------------------------------------------------------------- 365Scores – viešas svetainės sąrašas (jei atvirai pasiekiamas)
+S365 = ("https://webws.365scores.com/web/games/allscores/?appTypeId=5&langId=1&timezoneName=Europe/Vilnius"
+        "&startDate={d:%d/%m/%Y}&endDate={d:%d/%m/%Y}&sports=1")
+S365_STATE = {"off_until": 0, "last": ""}
+
+
+def s365_event(leg):
+    if _sp(leg) not in (None, "soccer") or time.time() < S365_STATE["off_until"]:
+        return None
+    k, c = _when(leg)
+    best = None
+    for d in (k.date(), k.date() - timedelta(days=1), k.date() + timedelta(days=1)):
+        old = d < (datetime.now() - timedelta(days=2)).date()
+        try:
+            data = _get(S365.format(d=d), ttl=7 * 86400 if old else 600)
+        except urllib.error.HTTPError as e:
+            S365_STATE["last"] = f"HTTP {e.code}"
+            if e.code in (401, 403, 429):
+                S365_STATE["off_until"] = time.time() + 1800
+                return None
+            continue
+        except Exception as e:
+            S365_STATE["last"] = type(e).__name__
+            continue
+        S365_STATE["last"] = "ok"
+        for g in data.get("games") or []:
+            h, a = g.get("homeCompetitor") or {}, g.get("awayCompetitor") or {}
+            ok, _ = _pair(leg, [h.get("name"), h.get("shortName")], [a.get("name"), a.get("shortName")])
+            if not ok:
+                continue
+            try:
+                t = datetime.fromisoformat(str(g.get("startTime"))).astimezone().replace(tzinfo=None)
+            except Exception:
+                continue
+            if not (c - timedelta(hours=30) <= t <= c + timedelta(hours=36)):
+                continue
+            gap = abs((t - k).total_seconds())
+            if best is None or gap < best[0]:
+                best = (gap, g, t)
+    if not best:
+        return None
+    _, g, t = best
+    txt = str(g.get("statusText") or "").lower()
+    if "ended" in txt or txt in ("ft", "final"):
+        eps = "FT"
+    elif "postp" in txt or "cancel" in txt or "abandon" in txt:
+        eps = "POSTP."
+    elif "penalt" in txt or "extra" in txt or "aet" in txt:
+        return None                                       # be 90 min. rezultato
+    else:
+        eps = "NS"
+    hs, as_ = (g.get("homeCompetitor") or {}).get("score"), (g.get("awayCompetitor") or {}).get("score")
+    e = {"_t1": (g.get("homeCompetitor") or {}).get("name"), "_t2": (g.get("awayCompetitor") or {}).get("name"),
+         "Tr1": None if hs is None or hs < 0 else int(hs), "Tr2": None if as_ is None or as_ < 0 else int(as_),
+         "Eps": eps, "_sport": "soccer", "_league": "365Scores, " + str(g.get("competitionDisplayName") or ""),
+         "_start": t}
+    if e["Tr1"] is not None and e["Tr2"] is not None:
+        e["Ewt"] = 1 if e["Tr1"] > e["Tr2"] else 2 if e["Tr2"] > e["Tr1"] else None
+    h, a = leg.get("home"), leg.get("away")
+    e["_swapped"] = (R.mscore(h, e["_t2"]) + R.mscore(a, e["_t1"])) > (R.mscore(h, e["_t1"]) + R.mscore(a, e["_t2"]))
+    return e
