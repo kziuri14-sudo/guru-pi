@@ -404,6 +404,13 @@ class Auditor:
                         if l["status"] == "unknown":
                             l["status"], l["detail"] = "pending", None
             self.d["settle_ver"] = 12
+        if self.d.get("settle_ver", 0) < 13:          # kėlinių statymai buvo vertinami pagal visas rungtynes – perskaičiuojam viską
+            for b in self.d["bets"]:
+                b["status"], b["tries"], b["next"] = "pending", 0, 0
+                for l in b["legs"]:
+                    l["status"], l["detail"] = "pending", None
+                    l.pop("note", None)
+            self.d["settle_ver"] = 13
         self._keys = {(b["c"], b["mid"]) for b in self.d["bets"]}
         self._done, self._last_save, self._sum = [], 0, (0, None)
         self._ocr = False

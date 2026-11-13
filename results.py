@@ -253,9 +253,10 @@ def state(e):
 
 def _period_text(b):
     t = _fold(f"{b.get('pick')} {b.get('market') or ''}")
-    if re.search(r"\b(1st half|first half|1h|1 half|pirmas kelinys|1 kelinys|ht)\b", t):
+    if re.search(r"\b(1st half|first half|1h|1 half|half ?time|ht|pirm\w* kelin\w*|1 kelin\w*|i kelin\w*|"
+                 r"pirm\w* puse\w*|1 puse\w*)\b", t):
         return "h1"
-    if re.search(r"\b(2nd half|second half|2h|antras kelinys)\b", t):
+    if re.search(r"\b(2nd half|second half|2h|antr\w* kelin\w*|2 kelin\w*|ii kelin\w*|antr\w* puse\w*)\b", t):
         return "h2"
     m = re.search(r"\b([1-4])(st|nd|rd|th)? (quarter|q|kelinys|ketvirtis)\b|\bq([1-4])\b", t)
     if m:

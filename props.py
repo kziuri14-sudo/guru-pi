@@ -953,6 +953,16 @@ def sportscore_event(leg):
          "_league": "SportScore, " + str(m.get("competition") or ""), "_start": t}
     if hs is not None and as_ is not None:
         e["Ewt"] = 1 if hs > as_ else 2 if as_ > hs else None
+    if eps == "FT" and sport == "football":                   # kėlinio rezultatas – iš rungtynių kortelės
+        parts = [x for x in str(m.get("url") or "").split("/") if x]
+        if len(parts) >= 3:
+            det = _sps(f"/match/?sport=football&slug={parts[2]}", ttl=30 * 86400)
+            mm = (det or {}).get("match") or {}
+            if str(mm.get("time")) == str(m.get("time")) and mm.get("home_ht_score") not in (None, ""):
+                try:
+                    e["Trh1"], e["Trh2"] = int(mm["home_ht_score"]), int(mm["away_ht_score"])
+                except Exception:
+                    pass
     h, a = leg.get("home"), leg.get("away")
     e["_swapped"] = (R.mscore(h, e["_t2"]) + R.mscore(a, e["_t1"])) > (R.mscore(h, e["_t1"]) + R.mscore(a, e["_t2"]))
     return e
