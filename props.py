@@ -9,6 +9,7 @@ Jei rungtynių ar žaidėjo rasti nepavyksta, grąžinama None – toks statymas
 import json
 import re
 import time
+import urllib.error
 import urllib.request
 from datetime import datetime, timedelta
 
@@ -563,6 +564,72 @@ def fotmob_event(leg):
          "_sport": "soccer", "_league": f"FotMob, {lname}", "_start": t}
     if e["Tr1"] is not None and e["Tr2"] is not None:
         e["Ewt"] = 1 if e["Tr1"] > e["Tr2"] else 2 if e["Tr2"] > e["Tr1"] else None
+    h, a = leg.get("home"), leg.get("away")
+    e["_swapped"] = (R.mscore(h, e["_t2"]) + R.mscore(a, e["_t1"])) > (R.mscore(h, e["_t1"]) + R.mscore(a, e["_t2"]))
+    return e
+
+
+# ---------------------------------------------------------------- SofaScore – jei atvirai pasiekiama (jei blokuoja – negudraujam)
+SOFA = "https://api.sofascore.com/api/v1/sport/{sport}/scheduled-events/{d:%Y-%m-%d}"
+SOFA_SPORT = {"soccer": "football", "basketball": "basketball", "hockey": "ice-hockey", "tennis": "tennis",
+              "american_football": "american-football", "baseball": "baseball", "handball": "handball",
+              "volleyball": "volleyball"}
+SOFA_STATE = {"off_until": 0, "last": ""}
+
+
+def sofa_event(leg):
+    if time.time() < SOFA_STATE["off_until"]:
+        return None
+    sp = _sp(leg) or ({"handball": "handball", "volleyball": "volleyball", "tennis": "tennis"}.get(_fold(leg.get("sport"))))
+    slug = SOFA_SPORT.get(sp or "soccer", "football")
+    k, c = _when(leg)
+    best = None
+    for d in (k.date(), k.date() - timedelta(days=1), k.date() + timedelta(days=1)):
+        old = d < (datetime.now() - timedelta(days=2)).date()
+        try:
+            data = _get(SOFA.format(sport=slug, d=d), ttl=86400 if old else 600)
+        except urllib.error.HTTPError as e:
+            SOFA_STATE["last"] = f"HTTP {e.code}"
+            if e.code in (401, 403, 429):
+                SOFA_STATE["off_until"] = time.time() + 6 * 3600     # svetainė neleidžia – neapeinam
+                return None
+            continue
+        except Exception as e:
+            SOFA_STATE["last"] = type(e).__name__
+            continue
+        SOFA_STATE["last"] = "ok"
+        for ev in data.get("events") or []:
+            h, a = ev.get("homeTeam") or {}, ev.get("awayTeam") or {}
+            ok, _ = _pair(leg, [h.get("name"), h.get("shortName")], [a.get("name"), a.get("shortName")])
+            if not ok:
+                continue
+            try:
+                t = datetime.fromtimestamp(int(ev.get("startTimestamp")))
+            except Exception:
+                continue
+            if not (c - timedelta(hours=8) <= t <= c + timedelta(hours=36)):
+                continue
+            gap = abs((t - k).total_seconds())
+            if best is None or gap < best[0]:
+                best = (gap, ev, t)
+    if not best:
+        return None
+    _, ev, t = best
+    st = str((ev.get("status") or {}).get("type") or "").lower()
+    hs, as_ = ev.get("homeScore") or {}, ev.get("awayScore") or {}
+    eps = {"finished": "FT", "canceled": "CANC.", "postponed": "POSTP.", "notstarted": "NS"}.get(st, "LIVE")
+    if eps == "FT" and slug == "football" and hs.get("normaltime") is not None and hs.get("current") != hs.get("normaltime"):
+        eps = "AET"
+    e = {"_t1": (ev.get("homeTeam") or {}).get("name"), "_t2": (ev.get("awayTeam") or {}).get("name"),
+         "Tr1": hs.get("current"), "Tr2": as_.get("current"), "Eps": eps,
+         "_sport": {"football": "soccer", "ice-hockey": "hockey"}.get(slug, slug),
+         "_league": "SofaScore, " + str(((ev.get("tournament") or {}).get("name")) or ""), "_start": t}
+    if hs.get("normaltime") is not None and as_.get("normaltime") is not None:
+        e["Tr1OR"], e["Tr2OR"] = hs["normaltime"], as_["normaltime"]
+    if hs.get("period1") is not None and as_.get("period1") is not None:
+        e["Trh1"], e["Trh2"] = hs["period1"], as_["period1"]
+    wc = ev.get("winnerCode")
+    e["Ewt"] = 1 if wc == 1 else 2 if wc == 2 else None
     h, a = leg.get("home"), leg.get("away")
     e["_swapped"] = (R.mscore(h, e["_t2"]) + R.mscore(a, e["_t1"])) > (R.mscore(h, e["_t1"]) + R.mscore(a, e["_t2"]))
     return e

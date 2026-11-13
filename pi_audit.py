@@ -394,14 +394,14 @@ class Auditor:
                         if l["status"] == "unknown":
                             l["status"], l["detail"] = "pending", None
             self.d["settle_ver"] = 8
-        if self.d.get("settle_ver", 0) < 9:          # FotMob, DNB, „sausai“ – tikrinam iš naujo
+        if self.d.get("settle_ver", 0) < 10:          # FotMob, DNB, „sausai“ – tikrinam iš naujo
             for b in self.d["bets"]:
                 if b["status"] in ("unknown", "pending"):
                     b["status"], b["tries"], b["next"] = "pending", 0, 0
                     for l in b["legs"]:
                         if l["status"] == "unknown":
                             l["status"], l["detail"] = "pending", None
-            self.d["settle_ver"] = 9
+            self.d["settle_ver"] = 10
         self._keys = {(b["c"], b["mid"]) for b in self.d["bets"]}
         self._done, self._last_save, self._sum = [], 0, (0, None)
         self._ocr = False
@@ -1113,6 +1113,7 @@ Jei žaidėjas nežaidė – "played": false. Jei patikimo šaltinio neradai –
                 "odds": oddsb, "recent": recent, "chats": len(chats), "queue": self.qlen(), "queue_photo": self.qlen(True),
                 "backfill_left": self.backfill_left(), "focus": self.d["chats"].get(fc, "") if fc else "",
                 "web_used": self.d.get("web_used", 0),
+                "sofascore": (props.SOFA_STATE.get("last") if props else ""),
                 "done_msgs": self.d["done_msgs"], "ai_used": self.d["ai_used"] + self.d.get("groq_used", 0),
                 "ai_cap": self.cap + (self.gcap if self.cfg.get("groq_key") else 0),
                 "groq_used": self.d.get("groq_used", 0), "gemini_used": self.d["ai_used"],

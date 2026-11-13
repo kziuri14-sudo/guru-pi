@@ -51,8 +51,12 @@ _cache = {}
 WEB = None          # Raspberry priskiria: paieška internete (Google), kai kiti šaltiniai neturi
 
 
+_SPECIAL = str.maketrans({"ø": "o", "Ø": "O", "æ": "ae", "Æ": "AE", "ß": "ss", "đ": "d", "Đ": "D", "ł": "l", "Ł": "L",
+                          "ı": "i", "þ": "th", "Þ": "Th", "œ": "oe", "Œ": "OE", "ð": "d"})
+
+
 def _fold(s):
-    s = unicodedata.normalize("NFKD", str(s or "")).encode("ascii", "ignore").decode().lower()
+    s = unicodedata.normalize("NFKD", str(s or "").translate(_SPECIAL)).encode("ascii", "ignore").decode().lower()
     return re.sub(r"[^a-z0-9]+", " ", s).strip()
 
 
@@ -440,7 +444,7 @@ def settle(b):
     if not e:
         try:
             import props                            # LiveScore neturi – ESPN / EuroLeague / FotMob
-            e2 = props.alt_event(b) or props.fotmob_event(b)
+            e2 = props.alt_event(b) or props.fotmob_event(b) or props.sofa_event(b)
         except Exception:
             e2 = None
         if not e2 and WEB:
@@ -449,7 +453,7 @@ def settle(b):
             except Exception:
                 e2 = None
         if not e2:
-            return None, None, "rungtynių nerado nei LiveScore, nei ESPN/EuroLeague/FotMob, nei paieška internete"
+            return None, None, "rungtynių nerado nei LiveScore, ESPN/EuroLeague, FotMob, SofaScore, nei paieška internete"
         if state(e2) != "done" and state(e2) != "void":
             return None, None, f"internete: rungtynės dar nesibaigė ar nevyko ({e2.get('Eps')})"
         res, detail = evaluate(b, e2)
@@ -459,7 +463,7 @@ def settle(b):
     if state(e) in ("ns", "live") and e.get("_start") and e["_start"] < datetime.now() - timedelta(hours=4):
         try:                                        # LiveScore „įstrigo“ (pvz. OT, nors seniai baigėsi) – kitas šaltinis
             import props
-            e2 = props.alt_event(b) or props.fotmob_event(b)
+            e2 = props.alt_event(b) or props.fotmob_event(b) or props.sofa_event(b)
         except Exception:
             e2 = None
         if not e2 and WEB:
