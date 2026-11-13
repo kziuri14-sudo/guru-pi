@@ -423,6 +423,14 @@ class Auditor:
             self.db.execute("DELETE FROM q")
             self.db.execute("DELETE FROM done")
             self.db.commit()
+        if self.d.get("mkt_ver", 0) < 1:             # pataisyta rinkų atpažinimo logika – koeficientus tikrinam iš naujo
+            for b in self.d["bets"]:
+                b["next"] = 0
+                for k in ("mkt", "mkt_try", "mkt_next"):
+                    b.pop(k, None)
+                for l in b["legs"]:
+                    l.pop("mkt", None)
+            self.d["mkt_ver"] = 1
         if self.d.get("force_ver", 0) < 1:           # GuruChat LT visada įtraukiama – grupes perieškom iškart
             self.d["discovered"], self.d["force_ver"] = 0, 1
         if self.d.get("settle_ver", 0) < 6:          # nauji šaltiniai ir pavadinimai – „nežinomus“ tikrinam iš naujo
@@ -1081,10 +1089,10 @@ Jei žaidėjas nežaidė – "played": false. Jei patikimo šaltinio neradai –
                         for l in pend):
                 b["next"] = time.time() + 1800            # LiveScore rodo, kad dar nesibaigė – bandymų neskaičiuojam
             elif not checked.get(id(b)):                  # rungtynės dar nesibaigė – laukiam, bandymų neskaičiuojam
-                try:
-                    b["next"] = min(self._kick(l, b) for l in pend).timestamp() + 2.25 * 3600
+                try:                                      # (bet ne ilgiau 30 min. – laikas gali būti nuskaitytas klaidingai)
+                    b["next"] = min(min(self._kick(l, b) for l in pend).timestamp() + 2.25 * 3600, time.time() + 1800)
                 except Exception:
-                    b["next"] = time.time() + 3600
+                    b["next"] = time.time() + 1800
             else:
                 b["tries"] += 1
                 b["next"] = time.time() + (1200 if b["tries"] <= 3 else 2 * 3600)
@@ -1260,6 +1268,12 @@ Jei žaidėjas nežaidė – "played": false. Jei patikimo šaltinio neradai –
                 for x in got:
                     o *= x
                 b["mkt"] = {"odds": round(o, 2), "posted": b.get("odds"), "legs": len(got)}
+                try:
+                    po = float(b.get("odds") or 0)
+                except Exception:
+                    po = 0
+                if po > 1.01 and not (0.7 <= o / po <= 1.45):   # grupės ir bukmekerių koef. labai skiriasi –
+                    b["mkt"] = {"none": f"rinka neatitinka (grupė {po:g}, bukmekeriai {o:.2f})"}   # tikriausiai kita rinka
                 continue
             if why:
                 b["mkt"] = {"none": why}

@@ -1055,6 +1055,11 @@ def _wanted(leg, m, sw):
     """Kokios rinkos ir kokios reikšmės ieškoti (API-Sports pavadinimais)."""
     if is_prop(leg) or R._period_text(leg) != "ft":
         return None
+    if re.search(r"nil|sausai|be praleist|clean sheet|exact|tiksl|correct score|margin|half|kelin|"
+                 r"interval|corner|kamp|card|kortel|both halves|abu kelin|\bor\b|\barba\b|&|and both|ir abi|team total|"
+                 r"individual|komandos total|\bodd\b|\beven\b|lyginis|nelyginis|first goal|pirm\w* ivart|scorer",
+                 _fold(f"{leg.get('pick')} {leg.get('market') or ''}")):
+        return None                                       # kita rinka – tik pagrindinės (1X2, DC, BTTS, Over/Under, AH)
     side = str(leg.get("side") or "").lower()
     pick = _fold(leg.get("pick") or "")
     line = leg.get("line")
