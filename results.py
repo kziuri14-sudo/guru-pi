@@ -90,8 +90,22 @@ def _pm(t, lst):
     return any(t[:4] == x[:4] for x in lst)
 
 
+def marks(name):
+    """Jaunimo / rezervų žymės: „U19“, „U-21“, „Res“, „II“, „B“, „Reserves“ – pagrindinė komanda ≠ jaunimas ≠ rezervai."""
+    t = f" {_fold(name)} "
+    m = {"u" + x for x in re.findall(r" (?:u|sub|under) ?(\d{2}) ", t)}
+    if re.search(r" (?:youth|juniors?|jaunimas|primavera|academy) ", t):
+        m.add("youth")
+    if re.search(r" (?:res|reserves?|reserva|ii|b|2|jong) ", t):
+        m.add("res")
+    return frozenset(m)
+
+
 def conflict(sig_name, ev_name):
-    """Abu pavadinimai turi savų, nesutampančių žodžių (Slovan ≠ Inter Bratislava, United ≠ City) – ne ta komanda."""
+    """Abu pavadinimai turi savų, nesutampančių žodžių (Slovan ≠ Inter Bratislava, United ≠ City) – ne ta komanda.
+    Taip pat: skirtinga amžiaus grupė ar rezervai (Colchester U21 ≠ Colchester United)."""
+    if sig_name and ev_name and marks(sig_name) != marks(ev_name):
+        return True
     a, b = _ctoks(sig_name), _ctoks(ev_name)
     return any(not _pm(t, b) for t in a) and any(not _pm(t, a) for t in b)
 
@@ -456,21 +470,53 @@ def settle(b):
     return res
 
 
+SOURCES = [("ESPN/EuroLeague", "alt_event"), ("API-Sports", "apisports_event"), ("FotMob", "fotmob_event"),
+           ("365Scores", "s365_event"), ("SofaScore", "sofa_event")]
+
+
+def alt_sources(b, tried):
+    """Visi atsarginiai šaltiniai iš eilės; tried – kas bandyta ir kuo baigėsi (rodoma programėlėje)."""
+    try:
+        import props
+    except Exception:
+        return None
+    for name, fn in SOURCES:
+        f = getattr(props, fn, None)
+        if not f:
+            continue
+        try:
+            e = f(b)
+        except Exception:
+            tried.append(f"{name}: klaida")
+            continue
+        if e:
+            tried.append(f"{name} ✓")
+            return e
+        why = ""
+        if name == "API-Sports":
+            last = str(getattr(props, "APIS_STATE", {}).get("last", ""))
+            why = " (nemokamas planas – tik vakar–rytoj)" if "Free plans" in last else \
+                " (nėra rakto)" if not (getattr(props, "CFG", {}) or {}).get("apisports_key") else ""
+        elif name == "SofaScore" and "403" in str(getattr(props, "SOFA_STATE", {}).get("last", "")):
+            why = " (neleidžia, 403)"
+        tried.append(f"{name} ✗{why}")
+    if WEB:
+        try:
+            e = WEB(b)
+        except Exception:
+            e = None
+        tried.append("paieška internete " + ("✓" if e else "✗"))
+        return e
+    return None
+
+
 def _settle(b):
     e = find(b)
     if not e:
-        try:
-            import props                            # LiveScore neturi – ESPN / EuroLeague / FotMob
-            e2 = props.alt_event(b) or props.apisports_event(b) or props.fotmob_event(b) or props.s365_event(b) or props.sofa_event(b)
-        except Exception:
-            e2 = None
-        if not e2 and WEB:
-            try:
-                e2 = WEB(b)
-            except Exception:
-                e2 = None
+        tried = ["LiveScore ✗"]
+        e2 = alt_sources(b, tried)
         if not e2:
-            return None, None, "rungtynių nerado nei LiveScore, ESPN/EuroLeague, API-Sports, FotMob, 365Scores, SofaScore, nei paieška internete"
+            return None, None, "nerasta: " + ", ".join(tried)
         if late(b, e2):
             return None, None, LATE
         if state(e2) != "done" and state(e2) != "void":
@@ -482,16 +528,7 @@ def _settle(b):
     if late(b, e):
         return None, None, LATE
     if state(e) in ("ns", "live") and e.get("_start") and e["_start"] < datetime.now() - timedelta(hours=4):
-        try:                                        # LiveScore „įstrigo“ (pvz. OT, nors seniai baigėsi) – kitas šaltinis
-            import props
-            e2 = props.alt_event(b) or props.apisports_event(b) or props.fotmob_event(b) or props.s365_event(b) or props.sofa_event(b)
-        except Exception:
-            e2 = None
-        if not e2 and WEB:
-            try:
-                e2 = WEB(b)
-            except Exception:
-                e2 = None
+        e2 = alt_sources(b, [])                     # LiveScore „įstrigo“ (pvz. OT, nors seniai baigėsi) – kitas šaltinis
         if e2 and state(e2) in ("done", "void"):
             res, detail = evaluate(b, e2)
             if res is not None:
