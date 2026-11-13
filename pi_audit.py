@@ -15,6 +15,7 @@ import os
 import re
 import shutil
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 import subprocess
 import time
 import urllib.error
@@ -745,16 +746,26 @@ class Auditor:
     FINAL = re.compile(r"neskaičiuojam|neįvertina|procentin|kombinuotas|neaišku|nežinoma rinka|nėra linijos|"
                        r"nepalaikoma|ne rungtynių komanda")
 
+    @staticmethod
+    def _check_leg(l, k):
+        try:
+            lg = dict(l, kickoff=k.isoformat(timespec="minutes"))
+            if props and props.is_prop(l):                  # žaidėjai, kampiniai, kortelės – EuroLeague / ESPN
+                return props.settle(lg)
+            st, detail, info = results.settle(lg)
+            if not st and props and re.search(r"žaidėj|ne rungtynių komanda|neįvertina", info or ""):
+                return props.settle(lg)
+            return st, detail, info
+        except Exception as e:
+            return None, None, f"klaida: {str(e)[:80]}"
+
     def settle_some(self, limit=60):
         now = datetime.now()
-        n = 0
+        todo, picked = [], []
         for b in list(reversed(self.d["bets"])):          # naujausi pirmi – šviežūs rezultatai greičiau
-            if b["status"] != "pending" or n >= limit:
+            if b["status"] != "pending" or len(todo) >= limit or b.get("next", 0) > time.time():
                 continue
-            if b.get("next", 0) > time.time():
-                continue
-            n0 = n
-            waiting = 0
+            picked.append(b)
             for l in b["legs"]:
                 if l["status"] != "pending":
                     continue
@@ -762,44 +773,38 @@ class Auditor:
                 if k + timedelta(hours=2, minutes=15) > now:
                     l["note"] = "laukia rungtynių pabaigos"
                     continue
-                n += 1
-                info = ""
-                try:
-                    lg = dict(l, kickoff=k.isoformat(timespec="minutes"))
-                    if props and props.is_prop(l):                  # žaidėjai, kampiniai, kortelės – EuroLeague / ESPN
-                        st, detail, info = props.settle(lg)
-                    else:
-                        st, detail, info = results.settle(lg)
-                        if not st and props and re.search(r"žaidėj|ne rungtynių komanda|neįvertina", info or ""):
-                            st, detail, info = props.settle(lg)
-                except Exception as e:
-                    st, detail, info = None, None, f"klaida: {str(e)[:80]}"
-                if st:
-                    l["status"], l["detail"] = st, detail
-                    l.pop("note", None)
-                elif info and self.FINAL.search(info):
-                    l["status"], l["detail"] = "unknown", info + " – neįskaitoma"   # šito patikrinti neįmanoma
-                    l.pop("note", None)
-                else:
-                    l["note"] = info or "tikrinama"
-                    if "dar vyksta arba neprasidėjo" in (info or ""):
-                        waiting += 1                      # rungtynės dar nesibaigė (pvz. kombo kitos dienos dalis)
+                todo.append((b, l, k))
+        with ThreadPoolExecutor(max_workers=6) as ex:     # keli šaltiniai vienu metu – ~6× greičiau
+            outs = list(ex.map(lambda x: self._check_leg(x[1], x[2]), todo))
+        checked, waiting = {}, {}
+        for (b, l, k), (st, detail, info) in zip(todo, outs):
+            checked[id(b)] = checked.get(id(b), 0) + 1
+            if st:
+                l["status"], l["detail"] = st, detail
+                l.pop("note", None)
+            elif info and self.FINAL.search(info):
+                l["status"], l["detail"] = "unknown", info + " – neįskaitoma"   # šito patikrinti neįmanoma
+                l.pop("note", None)
+            else:
+                l["note"] = info or "tikrinama"
+                if "dar vyksta arba neprasidėjo" in (info or ""):
+                    waiting[id(b)] = waiting.get(id(b), 0) + 1
+        for b in picked:
             sts = [l["status"] for l in b["legs"]]
+            pend = [l for l in b["legs"] if l["status"] == "pending"]
             if "lost" in sts:
                 b["status"] = "lost"
             elif all(x in ("won", "push") for x in sts):
                 b["status"] = "push" if all(x == "push" for x in sts) else "won"
-            elif "pending" not in sts:
+            elif not pend:
                 b["status"] = "unknown"                   # bent viena dalis nepatikrinama – kombo neįskaitom
-            elif waiting and str(b["t"])[:10] >= (now - timedelta(days=4)).strftime("%Y-%m-%d") and waiting == sum(1 for l in b["legs"] if l["status"] == "pending" and l.get("note") and
-                                            "dar vyksta arba neprasidėjo" in l["note"]) and \
-                    all("dar vyksta arba neprasidėjo" in (l.get("note") or "") or l.get("note") == "laukia rungtynių pabaigos"
-                        for l in b["legs"] if l["status"] == "pending"):
+            elif waiting.get(id(b)) and str(b["t"])[:10] >= (now - timedelta(days=4)).strftime("%Y-%m-%d") and \
+                    all(re.search(r"dar vyksta arba neprasidėjo|laukia rungtynių pabaigos", l.get("note") or "")
+                        for l in pend):
                 b["next"] = time.time() + 1800            # LiveScore rodo, kad dar nesibaigė – bandymų neskaičiuojam
-            elif n == n0:                                 # rungtynės dar nesibaigė – laukiam, bandymų neskaičiuojam
+            elif not checked.get(id(b)):                  # rungtynės dar nesibaigė – laukiam, bandymų neskaičiuojam
                 try:
-                    b["next"] = min(self._kick(l, b) for l in b["legs"]
-                                    if l["status"] == "pending").timestamp() + 2.25 * 3600
+                    b["next"] = min(self._kick(l, b) for l in pend).timestamp() + 2.25 * 3600
                 except Exception:
                     b["next"] = time.time() + 3600
             else:
@@ -811,9 +816,8 @@ class Auditor:
                     old = True
                 if (old and b["tries"] >= 5) or b["tries"] > 12:
                     b["status"] = "unknown"          # rezultato rasti nepavyko – į statistiką neskaičiuojam
-                    for l in b["legs"]:
-                        if l["status"] == "pending":
-                            l["detail"] = (l.get("note") or "rezultato nerasta") + " – neįskaitoma"
+                    for l in pend:
+                        l["detail"] = (l.get("note") or "rezultato nerasta") + " – neįskaitoma"
 
     # ------------------------------------------------------------------ 5) reitingas
     def summary(self):
