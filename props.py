@@ -8,6 +8,7 @@ Jei rungtynių ar žaidėjo rasti nepavyksta, grąžinama None – toks statymas
 """
 import json
 import re
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -575,6 +576,8 @@ SOFA_SPORT = {"soccer": "football", "basketball": "basketball", "hockey": "ice-h
               "american_football": "american-football", "baseball": "baseball", "handball": "handball",
               "volleyball": "volleyball"}
 SOFA_STATE = {"off_until": 0, "last": ""}
+SOFA_C = {}
+SOFA_LOCK = threading.Lock()
 
 
 def sofa_event(leg):
@@ -586,12 +589,35 @@ def sofa_event(leg):
     best = None
     for d in (k.date(), k.date() - timedelta(days=1), k.date() + timedelta(days=1)):
         old = d < (datetime.now() - timedelta(days=2)).date()
+        url = SOFA.format(sport=slug, d=d)
+        hit = SOFA_C.get(url)
+        if hit and time.time() - hit[0] < (7 * 86400 if old else 600):
+            data = hit[1]
+        else:
+            data = None
+        if data is None:                                  # mandagiai: ne dažniau kaip kas 6 s (ir vienu metu – viena)
+            with SOFA_LOCK:
+                wait = SOFA_STATE.get("t", 0) + 6 - time.time()
+                if wait > 0:
+                    time.sleep(wait)
+                SOFA_STATE["t"] = time.time()
         try:
-            data = _get(SOFA.format(sport=slug, d=d), ttl=86400 if old else 600)
+            if data is None:
+                raw = _get(url, ttl=1)
+                _c.pop(url, None)                         # dideli sąrašai – laikom tik reikalingus laukus
+                keep = ("homeTeam", "awayTeam", "startTimestamp", "status", "homeScore", "awayScore", "winnerCode")
+                data = {"events": [{k: ev.get(k) for k in keep} | {"tournament": {"name": ((ev.get("tournament") or {})
+                                                                                            .get("name"))}}
+                                   for ev in raw.get("events") or []]}
+                for ev in data["events"]:
+                    for t in ("homeTeam", "awayTeam"):
+                        ev[t] = {"name": (ev.get(t) or {}).get("name"), "shortName": (ev.get(t) or {}).get("shortName")}
+                    ev["status"] = {"type": (ev.get("status") or {}).get("type")}
+                SOFA_C[url] = (time.time(), data)
         except urllib.error.HTTPError as e:
             SOFA_STATE["last"] = f"HTTP {e.code}"
             if e.code in (401, 403, 429):
-                SOFA_STATE["off_until"] = time.time() + 6 * 3600     # svetainė neleidžia – neapeinam
+                SOFA_STATE["off_until"] = time.time() + 1200          # ribojimas – palaukiam 20 min., neapeinam
                 return None
             continue
         except Exception as e:
