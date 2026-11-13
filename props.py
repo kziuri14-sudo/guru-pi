@@ -11,6 +11,7 @@ import re
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta
 
@@ -857,6 +858,101 @@ def s365_event(leg):
          "_start": t}
     if e["Tr1"] is not None and e["Tr2"] is not None:
         e["Ewt"] = 1 if e["Tr1"] > e["Tr2"] else 2 if e["Tr2"] > e["Tr1"] else None
+    h, a = leg.get("home"), leg.get("away")
+    e["_swapped"] = (R.mscore(h, e["_t2"]) + R.mscore(a, e["_t1"])) > (R.mscore(h, e["_t1"]) + R.mscore(a, e["_t2"]))
+    return e
+
+
+# ---------------------------------------------------------------- SportScore – viešas API (TheSports duomenys), labai plati aprėptis
+# Sąlyga: rodyti „Powered by SportScore“ nuorodą ten, kur naudojami duomenys (programėlėje – „analitika“ skiltyje).
+SPS = "https://sportscore.com/api/v1"
+SPS_STATE = {"off_until": 0, "last": ""}
+
+
+def _sps(path, ttl):
+    if time.time() < SPS_STATE["off_until"]:
+        return None
+    try:
+        return _get(f"{SPS}{path}{'&' if '?' in path else '?'}src=guru-pi", ttl=ttl)
+    except urllib.error.HTTPError as e:
+        SPS_STATE["last"] = f"HTTP {e.code}"
+        if e.code in (403, 429):
+            SPS_STATE["off_until"] = time.time() + 900
+        return None
+    except Exception as e:
+        SPS_STATE["last"] = type(e).__name__
+        return None
+
+
+def _sps_teams(name, sport):
+    """Komandų kandidatai pagal pavadinimą: pilnas, be trumpų žodžių/žymių, ilgiausias žodis."""
+    full = re.sub(r"\s+", " ", str(name or "")).strip()
+    words = [w for w in re.findall(r"[^\W\d_]{4,}", full) if _fold(w) not in R.GENERIC]
+    qs = [full, " ".join(words), max(words, key=len) if words else ""]
+    seen, out = set(), []
+    for q in qs:
+        if len(q) < 3 or q in seen:
+            continue
+        seen.add(q)
+        d = _sps(f"/search/?sport={sport}&limit=20&q={urllib.parse.quote(q)}", ttl=7 * 86400)
+        for t in (d or {}).get("teams") or []:
+            if t.get("slug") and _team_ok(name, [t.get("name")]) and t["slug"] not in {x[1] for x in out}:
+                out.append((t.get("name"), t["slug"]))
+        if out:
+            break
+    return out[:4]
+
+
+def sportscore_event(leg):
+    sp = _sp(leg) or "soccer"
+    sport = {"soccer": "football", "basketball": "basketball"}.get(sp)
+    if not sport:
+        return None
+    k, c = _when(leg)
+    best = None
+    for side in ("home", "away"):
+        if not leg.get(side):
+            continue
+        for tname, slug in _sps_teams(leg.get(side), sport):
+            for d in (k.date(), k.date() - timedelta(days=1), k.date() + timedelta(days=1)):
+                old = d < (datetime.now() - timedelta(days=2)).date()
+                f = _sps(f"/fixtures/?sport={sport}&team={slug}&date={d:%Y-%m-%d}", ttl=7 * 86400 if old else 600)
+                for m in (f or {}).get("matches") or []:
+                    ok, _ = _pair(leg, [m.get("home")], [m.get("away")])
+                    if not ok:
+                        continue
+                    try:
+                        t = datetime.fromisoformat(str(m.get("time"))).astimezone().replace(tzinfo=None)
+                    except Exception:
+                        continue
+                    if not (c - timedelta(hours=30) <= t <= c + timedelta(hours=36)):
+                        continue
+                    gap = abs((t - k).total_seconds())
+                    if best is None or gap < best[0]:
+                        best = (gap, m, t)
+        if best:
+            break
+    SPS_STATE["last"] = "ok" if best else (SPS_STATE["last"] if SPS_STATE["last"].startswith("HTTP") else "nerasta")
+    if not best:
+        return None
+    _, m, t = best
+    st, txt = str(m.get("status") or "").lower(), str(m.get("status_text") or "").lower()
+    if st == "finished":
+        if sport == "football" and re.search(r"pen|extra|aet|after", txt):
+            return None                                   # su pratęsimu / baudiniais – 90 min. rezultato nėra
+        eps = "FT"
+    elif re.search(r"postpon|cancel|abandon", txt):
+        eps = "POSTP."
+    else:
+        eps = "NS" if st == "upcoming" else "LIVE"
+    try:
+        hs, as_ = int(m.get("home_score")), int(m.get("away_score"))
+    except Exception:
+        hs = as_ = None
+    e = {"_t1": m.get("home"), "_t2": m.get("away"), "Tr1": hs, "Tr2": as_, "Eps": eps, "_sport": sp,
+         "_league": "SportScore, " + str(m.get("competition") or ""), "_start": t}
+    if hs is not None and as_ is not None:
+        e["Ewt"] = 1 if hs > as_ else 2 if as_ > hs else None
     h, a = leg.get("home"), leg.get("away")
     e["_swapped"] = (R.mscore(h, e["_t2"]) + R.mscore(a, e["_t1"])) > (R.mscore(h, e["_t1"]) + R.mscore(a, e["_t2"]))
     return e

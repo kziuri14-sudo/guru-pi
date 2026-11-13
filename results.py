@@ -470,7 +470,8 @@ def settle(b):
     return res
 
 
-SOURCES = [("ESPN/EuroLeague", "alt_event"), ("API-Sports", "apisports_event"), ("FotMob", "fotmob_event"),
+SOURCES = [("ESPN/EuroLeague", "alt_event"), ("API-Sports", "apisports_event"), ("SportScore", "sportscore_event"),
+           ("FotMob", "fotmob_event"),
            ("365Scores", "s365_event"), ("SofaScore", "sofa_event")]
 
 
