@@ -73,6 +73,29 @@ def _units(b):
     return (o - 1) if b["status"] == "won" else (-1.0 if b["status"] == "lost" else 0.0)
 
 
+def _leaders(bets, chats, kind):
+    """Pelningiausia grupė ir taikliausias žmogus pokalbių grupėse (tik patikrinti statymai)."""
+    gs, ms = {}, {}
+    for b in bets:
+        if b["status"] not in ("won", "lost", "push"):
+            continue
+        gs.setdefault(b["c"], []).append(b)
+        if kind.get(b["c"]) == "group" and b.get("u"):
+            ms.setdefault((b["c"], str(b["u"])), []).append(b)
+    def pack(lst, extra):
+        s = _stats(lst)
+        return {**extra, "n": s["n"], "w": s["w"], "l": s["l"], "p": s["p"], "hit": s["hit"], "roi": s["roi"],
+                "units": s["units"], "n_odds": s["n_odds"]}
+    groups = [pack(l, {"cid": c, "chat": chats.get(c, c)}) for c, l in gs.items()]
+    members = [pack(l, {"cid": c, "chat": chats.get(c, c), "u": u,
+                        "name": next((x.get("un") for x in l if x.get("un")), u)}) for (c, u), l in ms.items()]
+    bg = max(groups, key=lambda g: (g["units"], g["hit"] or 0, g["n"]), default=None)
+    bm = max(members, key=lambda m: (m["w"], m["units"], m["hit"] or 0), default=None)
+    return {"group": bg if bg and bg["n"] else None, "member": bm if bm and bm["w"] else None,
+            "groups": sorted(groups, key=lambda g: -g["units"])[:30],
+            "members": sorted(members, key=lambda m: (-m["w"], -m["units"]))[:30]}
+
+
 def _stats(bets):
     """Pataikymas, ROI (po 1 vnt.), vid. koef., serijos, didžiausias nuosmukis."""
     r = {"n": 0, "w": 0, "l": 0, "p": 0, "pend": 0, "unk": 0, "units": 0.0, "n_odds": 0, "odds_sum": 0.0,
@@ -375,6 +398,21 @@ class Auditor:
             self.d["bf_done"], self.d["oldest"] = {}, {}
             self.d["recollect_ver"] = 1
         self.d.setdefault("err", {})
+        if self.d.get("reset_ver", 0) < 1:           # vartotojo prašymu: viską nunulinam, analizuojam nuo šiandienos
+            try:
+                bk = base / f"audit_backup_{datetime.now():%Y%m%d_%H%M}.json"
+                bk.write_text(json.dumps(self.d, ensure_ascii=False), "utf-8")
+            except Exception:
+                pass
+            keep = {k: self.d[k] for k in ("chats", "kind", "discovered", "ai_day", "ai_used", "groq_used",
+                                          "web_used", "settle_ver", "recollect_ver", "err") if k in self.d}
+            self.d = {**keep, "bets": [], "queue": [], "last_id": {}, "oldest": {}, "bf_done": {}, "done_msgs": 0,
+                      "pause_until": 0, "groq_pause": 0, "web_cache": {}, "alerts": 0, "reset_ver": 1,
+                      "since": datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
+                      .isoformat(timespec="minutes")}
+            self.db.execute("DELETE FROM q")
+            self.db.execute("DELETE FROM done")
+            self.db.commit()
         if self.d.get("settle_ver", 0) < 6:          # nauji šaltiniai ir pavadinimai – „nežinomus“ tikrinam iš naujo
             for b in self.d["bets"]:
                 if b["status"] == "unknown":
@@ -489,11 +527,23 @@ class Auditor:
             q["u"], q["un"] = m.sender_id, _who(m)
         return q
 
+    def since(self):
+        """Nuo kada analizuojam: nustatymų „audit_since“ arba nunulinimo diena (00:00), bet ne senesnė nei N d."""
+        s = self.d.get("since") or self.cfg.get("audit_since")
+        lim = datetime.now().astimezone() - timedelta(days=self.days)
+        try:
+            d = datetime.fromisoformat(str(s))
+            if d.tzinfo is None:
+                d = d.astimezone()
+            return max(d, lim)
+        except Exception:
+            return lim
+
     def backfill_left(self):
         return sum(1 for c in self.d["chats"] if self.d["bf_done"].get(c, 0) < self.days)
 
     async def collect(self, per_chat=3000):
-        since = datetime.now().astimezone() - timedelta(days=self.days)
+        since = self.since()
         for cid, name in list(self.d["chats"].items()):
             new = []
             try:
@@ -1066,6 +1116,9 @@ Jei žaidėjas nežaidė – "played": false. Jei patikimo šaltinio neradai –
                 ser.append([d, round(cum, 2)])
             g["series"] = ser
             groups.append(g)
+        today = datetime.now().strftime("%Y-%m-%d")
+        for g in groups:
+            g["today"] = _stats([b for b in by_c.get(g["cid"], []) if str(b["t"])[:10] == today])
         od, cnt = self.order()
         fc = next((c for c in od if cnt.get(c)), None)
         for g in groups:
@@ -1113,14 +1166,17 @@ Jei žaidėjas nežaidė – "played": false. Jei patikimo šaltinio neradai –
             cum += day[d]
             series.append([d, round(cum, 2), round(day[d], 2)])
         recent = []
-        for b in sorted(bets, key=lambda x: x["t"], reverse=True)[:150]:
+        for b in sorted(bets, key=lambda x: x["t"], reverse=True)[:400]:
             recent.append({"t": b["t"], "c": b["c"], "chat": chats.get(b["c"], b["c"]), "who": b.get("un"),
                            "status": b["status"], "odds": b.get("odds"), "photo": b.get("photo", False),
                            "legs": [{"m": f"{l.get('home')} – {l.get('away') or ''}".strip(" –"), "pick": l.get("pick"),
                                      "st": l.get("status"),
                                      "d": (l.get("detail") or (("⏳ " + l["note"]) if l.get("note") else ""))[:110],
                                      "k": str(self._kick(l, b))[5:16]} for l in b["legs"][:6]]})
-        return {"groups": groups, "total": tot, "series": series, "hours": hours, "sides": sides, "sports": sports,
+        leaders = {"today": _leaders([b for b in bets if str(b["t"])[:10] == today], chats, kind),
+                   "all": _leaders(bets, chats, kind)}
+        return {"groups": groups, "total": tot, "leaders": leaders, "since": self.d.get("since"),
+                "today_total": _stats([b for b in bets if str(b["t"])[:10] == today]), "series": series, "hours": hours, "sides": sides, "sports": sports,
                 "odds": oddsb, "recent": recent, "chats": len(chats), "queue": self.qlen(), "queue_photo": self.qlen(True),
                 "backfill_left": self.backfill_left(), "focus": self.d["chats"].get(fc, "") if fc else "",
                 "web_used": self.d.get("web_used", 0),
