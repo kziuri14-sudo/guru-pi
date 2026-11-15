@@ -479,6 +479,15 @@ class Auditor:
                             l.pop("note", None)
             self.d["web_cache"] = {}
             self.d["settle_ver"] = 14
+        if self.d.get("settle_ver", 0) < 15:          # „paskelbta po rungtynių“ – tikslesnė taisyklė (LIVE tinka), perskaičiuojam
+            for b in self.d["bets"]:
+                if any("ne prognozė" in (l.get("detail") or "") for l in b["legs"]):
+                    b["status"], b["tries"], b["next"] = "pending", 0, 0
+                    b.pop("mkt", None)
+                    for l in b["legs"]:
+                        l["status"], l["detail"] = "pending", None
+                        l.pop("note", None)
+            self.d["settle_ver"] = 15
         self._keys = {(b["c"], b["mid"]) for b in self.d["bets"]}
         self._done, self._last_save, self._sum = [], 0, (0, None)
         self._ocr = False

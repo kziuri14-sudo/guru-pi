@@ -454,15 +454,26 @@ def evaluate(b, e):
 
 
 LATE = "paskelbta jau pasibaigus rungtynėms – ne prognozė, neįskaitoma"
+_DUR = {"soccer": 2.25, "basketball": 2.75, "hockey": 2.75}   # kiek vidutiniškai trunka rungtynės (val.)
 
 
 def late(b, e):
-    """Statymas paskelbtas, kai rungtynės jau buvo pasibaigusios (grupės kartais „prognozuoja“ atgaline data)."""
+    """Pranešimas, jei statymas paskelbtas JAU PASIBAIGUS rungtynėms (LIVE statymai rungtynių metu – tinka).
+    LiveScore laikas tikslus (mūsų laiko juosta); kitų šaltinių laiko juosta gali skirtis – jiems +2 val. atsargos."""
     try:
         created = datetime.fromisoformat(str(b.get("created") or b.get("kickoff"))[:16])
-        return e.get("_start") is not None and e["_start"] + timedelta(hours=2, minutes=15) < created
+        st = e.get("_start")
+        if st is None:
+            return None
+        dur = _DUR.get(str(e.get("_sport") or ls_sport(b) or "soccer"), 4.0)
+        exact = "Esd" in e
+        if created <= st + timedelta(hours=dur + (0 if exact else 2)):
+            return None
+        src = "LiveScore" if exact else str(e.get("_league") or "kitas šaltinis").split(",")[0][:30]
+        return (f"paskelbta {created:%m-%d %H:%M}, o rungtynės prasidėjo {st:%m-%d %H:%M} ({src}) – "
+                "jau pasibaigus, ne prognozė, neįskaitoma")
     except Exception:
-        return False
+        return None
 
 
 def settle(b):
@@ -527,16 +538,18 @@ def _settle(b):
         e2 = alt_sources(b, tried)
         if not e2:
             return None, None, "nerasta: " + ", ".join(tried)
-        if late(b, e2):
-            return None, None, LATE
+        lt = late(b, e2)
+        if lt:
+            return None, None, lt
         if state(e2) != "done" and state(e2) != "void":
             return None, None, f"internete: rungtynės dar nesibaigė ar nevyko ({e2.get('Eps')})"
         res, detail = evaluate(b, e2)
         if res is None:
             return None, None, detail
         return res, f"{detail} ({e2['_league']})", "ok"
-    if late(b, e):
-        return None, None, LATE
+    lt = late(b, e)
+    if lt:
+        return None, None, lt
     if state(e) in ("ns", "live") and e.get("_start") and e["_start"] < datetime.now() - timedelta(hours=4):
         e2 = alt_sources(b, [])                     # LiveScore „įstrigo“ (pvz. OT, nors seniai baigėsi) – kitas šaltinis
         if e2 and state(e2) in ("done", "void"):

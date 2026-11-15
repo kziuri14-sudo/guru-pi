@@ -501,7 +501,8 @@ def alt_event(leg):
         hm = next((x for x in c if x.get("homeAway") == "home"), c[0])
         aw = next((x for x in c if x is not hm), c[-1])
         try:
-            start = datetime.fromisoformat(str(ev.get("date"))[:16]) + timedelta(hours=2)
+            start = datetime.fromisoformat(str(ev.get("date")).replace("Z", "+00:00"))
+            start = start.astimezone().replace(tzinfo=None) if start.tzinfo else start + timedelta(hours=2)
         except Exception:
             start = k
         e = {"_t1": (hm.get("team") or {}).get("displayName"), "_t2": (aw.get("team") or {}).get("displayName"),
