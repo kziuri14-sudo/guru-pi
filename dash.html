@@ -87,6 +87,11 @@ th{font-size:12px;color:var(--mut);font-weight:600;border-top:0}td.n,th.n{text-a
     <div class="seg" id="perSeg"><button data-per="today">Šiandien</button><button data-per="all">Viskas</button><button data-per="bet">Galima statyti</button></div>
     <span class="sub" id="sinceTxt"></span>
   </div>
+  <div class="card" id="sigCard" style="cursor:pointer;border-color:var(--acc)">
+    <h2><span>📣 Tavo signalai · <span id="sigName"></span></span><span class="sub" id="sigPend"></span></h2>
+    <div class="grid2"><div class="stat"><b id="sigU">–</b><span>pelnas (grupės koef.)</span></div><div class="stat"><b id="sigB">–</b><span>pelnas pas bukmekerius</span></div>
+    <div class="stat"><b id="sigW">–</b><span>laimėta–pralaimėta</span></div><div class="stat"><b id="sigH">–</b><span>pataikymas</span></div></div>
+  </div>
   <div class="card hero">
     <h2><span id="heroLbl">Šiandienos pelnas</span><span class="sub" id="heroPend"></span></h2>
     <div class="big" id="heroUnits">–</div><div class="sub" id="heroSub">vienetų, statant po 1 vnt. kiekvienam statymui</div>
@@ -168,6 +173,11 @@ function renderHome(){const a=D.audit||{};const s=PER==='today'?a.today_total:PE
   $('heroLbl').textContent=PER==='today'?'Šiandienos pelnas':PER==='bet'?'Jei būtum statęs pas bukmekerius':'Pelnas nuo pradžios';
   $('heroSub').textContent=PER==='bet'?`vienetų po 1 vnt., pagal bukmekerių koeficientus · galima pastatyti ${a.mkt_ok||0} iš ${a.mkt_checked||0} patikrintų`:'vienetų, statant po 1 vnt. kiekvienam statymui';
   if(s){$('heroUnits').textContent=u(s.units);$('heroUnits').className='big '+cls(s.units);$('kN').textContent=s.n;$('kW').textContent=s.w+' / '+s.l;$('kH').textContent=pct(s.hit);$('heroPend').textContent=s.pend?`dar laukia ${s.pend}`:''}
+  const sg=(a.groups||[]).filter(x=>(a.signal||[]).includes(x.cid));
+  if(sg.length){const g0=sg[0],st=PER==='today'?(g0.today||{}):PER==='bet'?(g0.bet||{}):g0,bt=g0.bet||{};$('sigCard').style.display='';
+    $('sigName').textContent=N(g0.chat);$('sigU').textContent=u(st.units);$('sigU').className=cls(st.units);
+    $('sigB').textContent=bt.n?u(bt.units):'–';$('sigB').className=cls(bt.units);$('sigW').textContent=`${st.w||0}–${st.l||0}`;$('sigH').textContent=pct(st.hit);
+    $('sigPend').textContent=st.pend?`laukia ${st.pend}`:'';$('sigCard').onclick=()=>openGroup(g0.cid)}else $('sigCard').style.display='none';
   const L=leaderSet();const g=L.group,m=L.member;
   $('lgN').textContent=g?N(g.chat):'Dar nėra';$('lgV').textContent=g?u(g.units)+' vnt.':'';$('lgV').className='val '+(g?cls(g.units):'');
   $('lgS').textContent=g?`${g.w}–${g.l} · pataikymas ${pct(g.hit)}`:'Kai bus patikrintų statymų';
@@ -207,7 +217,7 @@ function renderMore(){const c=D.current||{},en=D.energy||{},a=D.audit||{};
   $('rCpu').textContent=c.cpu!=null?Math.round(c.cpu)+' %':'–';$('rW').textContent=c.w!=null?c.w.toFixed(2)+' W':'–';
   $('rTemp').textContent=c.temp!=null?c.temp.toFixed(1)+' °C':'–';$('rEur').textContent=en.eur_month!=null?en.eur_month.toFixed(2)+' €':'–';
   $('upTxt').textContent=D.uptime_h!=null?'veikia '+D.uptime_h+' val.':'';
-  const src=[['API-Sports',a.apifootball],['SportScore',a.sportscore],['365Scores',a.s365],['SofaScore',a.sofascore],['Bukmekerių koef.',a.odds_src],['Paieška internete',(a.web_used||0)+' paieškų šiandien'],['AI šiandien',`Groq ${a.groq_used||0} · Gemini ${a.gemini_used||0} · OCR ${a.ocr_used||0}`]];
+  const src=[['API-Sports',a.apifootball],['SportScore',a.sportscore],['365Scores',a.s365],['SofaScore',a.sofascore],['Bukmekerių koef.',a.odds_src],['Paieška internete',`Google ${a.web_used||0} · nemokama ${a.search?a.search.ok+'/'+a.search.n:0} rasta · ${a.search?a.search.last:''}`],['AI šiandien',`Groq ${a.groq_used||0} · Gemini ${a.gemini_used||0} · OCR ${a.ocr_used||0}`]];
   $('srcList').innerHTML=src.map(([n,v])=>`<div class="row" style="cursor:default"><div class="main"><div class="t">${n}</div><div class="s">${esc(v||'–')}</div></div></div>`).join('');
   const sig=(D.events||[]).filter(e=>e.kind==='signal').slice(-15).reverse();
   $('sigList').innerHTML=sig.map(e=>`<div class="row" style="cursor:default"><div class="main"><div class="t">${esc((e.text||'').split('\n')[0])}</div><div class="s">${esc((e.text||'').split('\n').slice(1).join(' · '))}</div></div><div class="r"><small>${new Date(e.t).toLocaleString('lt',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}</small>${e.link?`<a class="link" href="${esc(e.link)}" target="_blank" rel="noopener">Atidaryti</a>`:''}</div></div>`).join('')||'<div class="empty">Signalų dar nebuvo</div>';

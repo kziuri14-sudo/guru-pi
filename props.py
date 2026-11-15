@@ -1128,3 +1128,129 @@ def market_odds(leg):
     ODDS_STATE["last"] = f"ok: {m['h']} – {m['a']} {name} {vals[0]} @ {med}"
     return {"odds": round(med, 2), "best": got[-1][0], "book": got[-1][1], "n": len(got),
             "mk": f"{name}: {vals[0]}", "ko": t.isoformat(timespec="minutes") if t else None}
+
+
+# ---------------------------------------------------------------- paieška internete be Google API rakto
+# Kai Gemini paieška išnaudota: DuckDuckGo / Bing / Brave ir kt. per „ddgs“ biblioteką (Raspberry ją įsidiegia pats),
+# o jei jos nėra – DuckDuckGo HTML puslapis. Rezultatų ištraukas perskaito AI (Groq) ir grąžina tik tai, kas JOSE parašyta.
+SEARCH_STATE = {"lib": None, "last": "", "n": 0, "ok": 0}
+_UA = "Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+
+
+_SEARCH_LOCK = threading.Lock()
+
+
+def search_lib():
+    """ddgs biblioteka; jei nėra – bandom įdiegti (vieną kartą per paleidimą)."""
+    if SEARCH_STATE["lib"] is not None:
+        return SEARCH_STATE["lib"] or None
+    if not _SEARCH_LOCK.acquire(timeout=1):
+        return None                                       # kitas srautas šiuo metu diegia – kol kas be jos
+    try:
+        return _search_lib()
+    finally:
+        _SEARCH_LOCK.release()
+
+
+def _search_lib():
+    if SEARCH_STATE["lib"] is not None:
+        return SEARCH_STATE["lib"] or None
+    for mod in ("ddgs", "duckduckgo_search"):
+        try:
+            m = __import__(mod)
+            SEARCH_STATE["lib"] = m
+            return m
+        except Exception:
+            pass
+    try:
+        import subprocess, sys
+        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--break-system-packages", "ddgs"],
+                       timeout=600, capture_output=True)
+        import importlib
+        importlib.invalidate_caches()
+        m = __import__("ddgs")
+        SEARCH_STATE["lib"] = m
+        return m
+    except Exception:
+        SEARCH_STATE["lib"] = False
+        return None
+
+
+def _ddg_html(q, n=8):
+    data = urllib.parse.urlencode({"q": q, "kl": "wt-wt"}).encode()
+    req = urllib.request.Request("https://html.duckduckgo.com/html/", data=data, method="POST",
+                                 headers={"User-Agent": _UA, "Content-Type": "application/x-www-form-urlencoded"})
+    with urllib.request.urlopen(req, timeout=25) as r:
+        h = r.read().decode("utf-8", "ignore")
+    out = []
+    for m in re.finditer(r'class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>.*?class="result__snippet"[^>]*>(.*?)</a>',
+                         h, re.S):
+        url = urllib.parse.unquote(re.sub(r"^.*?uddg=([^&]+).*$", r"\1", m.group(1)))
+        strip = lambda s: re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", s)).strip()
+        out.append({"title": strip(m.group(2)), "href": url, "body": strip(m.group(3))})
+        if len(out) >= n:
+            break
+    return out
+
+
+def web_search(q, n=8):
+    """[{title, href, body}] – paieškos rezultatai (be API rakto)."""
+    SEARCH_STATE["n"] += 1
+    lib = search_lib()
+    if lib:
+        try:
+            D = getattr(lib, "DDGS")
+            with D() as s:
+                res = list(s.text(q, max_results=n) or [])
+            if res:
+                SEARCH_STATE["last"] = f"ddgs ok ({len(res)})"
+                return [{"title": r.get("title", ""), "href": r.get("href") or r.get("url", ""),
+                         "body": r.get("body", "")} for r in res]
+        except Exception as e:
+            SEARCH_STATE["last"] = f"ddgs {type(e).__name__}"
+    try:
+        res = _ddg_html(q, n)
+        SEARCH_STATE["last"] = f"ddg html ({len(res)})"
+        return res
+    except Exception as e:
+        SEARCH_STATE["last"] = f"ddg html {type(e).__name__}"
+        return []
+
+
+def page_text(url, limit=5000):
+    """Statinio puslapio tekstas (be JavaScript) – papildomai prie paieškos ištraukų."""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": _UA, "Accept-Language": "en"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            if "html" not in (r.headers.get("Content-Type") or ""):
+                return ""
+            h = r.read(600000).decode("utf-8", "ignore")
+    except Exception:
+        return ""
+    h = re.sub(r"(?is)<(script|style|noscript|svg)[^>]*>.*?</\1>", " ", h)
+    t = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", h))
+    return t[:limit]
+
+
+def search_context(queries, pages=2, n=8):
+    """Paieškos ištraukos (+ kelių puslapių tekstas) AI'ui. Grąžina (tekstas, url sąrašas)."""
+    seen, chunks, urls = set(), [], []
+    for q in queries:
+        for r in web_search(q, n):
+            u = r.get("href") or ""
+            if not u or u in seen:
+                continue
+            seen.add(u)
+            urls.append(u)
+            chunks.append(f"[{len(urls)}] {r.get('title')}\n{u}\n{r.get('body')}")
+        if len(urls) >= 12:
+            break
+    good = [u for u in urls if re.search(r"espn|bbc|wikipedia|worldfootball|soccerway|besoccer|transfermarkt|"
+                                         r"livesport|flashscore|sofascore|fotmob|eurobasket|basketball-reference|"
+                                         r"proballers|uefa|fifa|skysports|theguardian|reuters|apnews|nba\.com|"
+                                         r"euroleague|lkl|lff|aiscore|sportscore|scoreaxis|footystats", u)]
+    for u in good[:pages]:
+        t = page_text(u)
+        if t:
+            chunks.append(f"[puslapis] {u}\n{t}")
+    return "\n\n".join(chunks)[:16000], urls

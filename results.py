@@ -468,6 +468,14 @@ def late(b, e):
 def settle(b):
     """(status, detail, info) – status None, jei nepavyko (info paaiškina kodėl)."""
     res = _settle(b)
+    try:                                            # LIVE statymai įskaitomi – tik pažymim
+        if res[0] and b.get("created") and b.get("kickoff"):
+            c = datetime.fromisoformat(str(b["created"])[:16])
+            k = datetime.fromisoformat(str(b["kickoff"])[:16])
+            if c > k + timedelta(minutes=5):
+                res = (res[0], f"{res[1]} · LIVE statymas", res[2])
+    except Exception:
+        pass
     return res
 
 

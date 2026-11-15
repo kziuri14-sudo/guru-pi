@@ -469,6 +469,16 @@ class Auditor:
                     l["status"], l["detail"] = "pending", None
                     l.pop("note", None)
             self.d["settle_ver"] = 13
+        if self.d.get("settle_ver", 0) < 14:          # nauja nemokama paieška internete – neišspręstus bandom iš naujo
+            for b in self.d["bets"]:
+                if b["status"] == "unknown" and not any("ne prognozė" in (l.get("detail") or "") for l in b["legs"]):
+                    b["status"], b["tries"], b["next"] = "pending", 0, 0
+                    for l in b["legs"]:
+                        if l.get("status") in (None, "unknown", "pending"):
+                            l["status"], l["detail"] = "pending", None
+                            l.pop("note", None)
+            self.d["web_cache"] = {}
+            self.d["settle_ver"] = 14
         self._keys = {(b["c"], b["mid"]) for b in self.d["bets"]}
         self._done, self._last_save, self._sum = [], 0, (0, None)
         self._ocr = False
@@ -611,7 +621,7 @@ class Auditor:
         today = datetime.now().strftime("%Y-%m-%d")
         if self.d["ai_day"] != today:
             self.d["ai_day"], self.d["ai_used"], self.d["groq_used"] = today, 0, 0
-            self.d["web_used"] = 0
+            self.d["web_used"] = self.d["sweb_used"] = self.d["sweb_ok"] = 0
         return self._groq_ok() or self._gem_ok()
 
     def forced(self):
@@ -753,10 +763,51 @@ Jei žaidėjas nežaidė – "played": false. Jei patikimo šaltinio neradai –
                 self._err(f"web groq: {type(e).__name__}")
         return None
 
-    def _web(self, prompt):
-        """Gemini su Google paieška (o jei ilsisi – Groq su paieška) – kai LiveScore/ESPN/EuroLeague neturi."""
+    SEARCH_NOTE = """
+
+Žemiau – ką radau internete (paieškos ištraukos ir puslapiai). Naudok TIK šią informaciją, ne savo atmintį.
+Papildomai JSON'e grąžink "evidence": TIKSLIĄ trumpą citatą iš žemiau esančio teksto, kurioje matosi atsakymas.
+Jei tekste atsakymo nėra – {{"found": false}}.
+
+"""
+
+    def _web_search(self, prompt, queries, check=None):
+        """Nemokama paieška (DuckDuckGo/Bing per ddgs) + Groq perskaito rezultatus. check(r, ctx) – ar atsakymas tikrai tekste."""
+        if not props or not hasattr(props, "search_context") or not self.cfg.get("groq_key"):
+            return None
+        if time.time() < self.d.get("sweb_pause", 0):
+            return None
+        try:
+            ctx, urls = props.search_context(queries)
+        except Exception as e:
+            self._err(f"paieška: {type(e).__name__}")
+            return None
+        self.d["sweb_used"] = self.d.get("sweb_used", 0) + 1
+        if not ctx:
+            return None
+        r = groq_json(self.cfg, prompt + self.SEARCH_NOTE.replace("{{", "{").replace("}}", "}") + ctx, self.log)
+        if r == "quota":
+            self.d["sweb_pause"] = time.time() + 300
+            return None
+        if not isinstance(r, dict) or not r.get("found"):
+            return None
+        if check and not check(r, ctx):
+            self._err("paieška: AI atsakymo tekste nėra – atmesta")
+            return None
+        self.d["sweb_ok"] = self.d.get("sweb_ok", 0) + 1
+        r.setdefault("source", (urls or [""])[0])
+        return r
+
+    def _web(self, prompt, queries=None, check=None):
+        """Gemini su Google paieška → Groq su paieška → nemokama paieška (DuckDuckGo/Bing) + AI."""
         if self.d.get("web_used", 0) >= int(self.cfg.get("audit_web_per_day", 600)):
             return None
+        r = self._web_google(prompt)
+        if r is None and queries:
+            r = self._web_search(prompt, queries, check)
+        return r
+
+    def _web_google(self, prompt):
         if not self.cfg.get("gemini_key") or time.time() < self.d.get("web_pause", 0):
             return self._web_groq(prompt)
         body = json.dumps({"contents": [{"role": "user", "parts": [{"text": prompt}]}],
@@ -799,9 +850,20 @@ Jei žaidėjas nežaidė – "played": false. Jei patikimo šaltinio neradai –
         if hit and (hit.get("found") or time.time() - hit.get("ts", 0) < 6 * 3600):
             r = hit
         else:
-            r = self._web(self.WEB_PROMPT.format(home=leg.get("home"), away=leg.get("away") or "?",
+            h, a, d0 = leg.get("home"), leg.get("away") or "", str(leg.get("kickoff"))[:10]
+
+            def check(r, ctx):                            # rezultatas turi būti tekste (pvz. „2-1“, „2:1“)
+                try:
+                    x, y = int(r["home_score"]), int(r["away_score"])
+                except Exception:
+                    return str(r.get("status") or "").lower() in ("postponed", "cancelled") and \
+                        re.search(r"postpon|cancel|atidet|atšauk", ctx, re.I)
+                return bool(re.search(rf"(?<!\d){x}\s*[-:–—]\s*{y}(?!\d)|(?<!\d){y}\s*[-:–—]\s*{x}(?!\d)", ctx))
+
+            qs = [f"{h} vs {a} {d0}", f"{h} {a} score {leg.get('league') or ''}".strip()] if a else [f"{h} {d0} score"]
+            r = self._web(self.WEB_PROMPT.format(home=h, away=a or "?",
                                                  sport=leg.get("sport") or "?", league=leg.get("league") or "?",
-                                                 date=str(leg.get("kickoff"))[:10])) or {"found": False}
+                                                 date=d0), qs, check) or {"found": False}
             r["ts"] = time.time()
             cache[key] = r
             if len(cache) > 3000:
@@ -820,7 +882,7 @@ Jei žaidėjas nežaidė – "played": false. Jei patikimo šaltinio neradai –
                  "POSTP." if st in ("postponed", "cancelled") else "NS",
                  "Tr1": int(r["home_score"]) if r.get("home_score") is not None else None,
                  "Tr2": int(r["away_score"]) if r.get("away_score") is not None else None,
-                 "_sport": results.ls_sport(leg) or "soccer", "_league": "Google paieška: " + str(r.get("source") or "")[:60],
+                 "_sport": results.ls_sport(leg) or "soccer", "_league": "internetas: " + str(r.get("source") or "")[:60],
                  "_start": k}
             if r.get("regular_home") is not None and r.get("regular_away") is not None:
                 e["Tr1OR"], e["Tr2OR"] = int(r["regular_home"]), int(r["regular_away"])
@@ -836,9 +898,20 @@ Jei žaidėjas nežaidė – "played": false. Jei patikimo šaltinio neradai –
             return None
 
     def web_stat(self, leg, what):
+        def check(r, ctx):
+            if r.get("played") is False:
+                return True
+            try:
+                v = float(r["value"])
+            except Exception:
+                return False
+            return bool(re.search(rf"(?<![\d.]){v:g}(?![\d])", ctx))
+
+        d0 = str(leg.get("kickoff"))[:10]
+        qs = [f"{leg.get('home')} vs {leg.get('away') or ''} {what} {d0}", f"{leg.get('home')} {leg.get('away') or ''} stats {d0}"]
         r = self._web(self.WEB_STAT_PROMPT.format(home=leg.get("home"), away=leg.get("away") or "?",
                                                   sport=leg.get("sport") or "?", league=leg.get("league") or "?",
-                                                  date=str(leg.get("kickoff"))[:10], what=what))
+                                                  date=d0, what=what), qs, check)
         return r if r and r.get("found") else None
 
     def _err(self, what):
@@ -1219,6 +1292,10 @@ Jei žaidėjas nežaidė – "played": false. Jei patikimo šaltinio neradai –
                 "odds": oddsb, "recent": recent, "chats": len(chats), "queue": self.qlen(), "queue_photo": self.qlen(True),
                 "backfill_left": self.backfill_left(), "focus": self.d["chats"].get(fc, "") if fc else "",
                 "web_used": self.d.get("web_used", 0),
+                "search": {"n": self.d.get("sweb_used", 0), "ok": self.d.get("sweb_ok", 0),
+                           "last": (props.SEARCH_STATE.get("last") if props and hasattr(props, "SEARCH_STATE") else "")},
+                "signal": [c for c, nm in self.d["chats"].items()
+                           if any(_n(x) and _n(x) in _n(nm) for x in (self.cfg.get("groups") or []))],
                 "sofascore": (props.SOFA_STATE.get("last") if props else ""),
                 "apifootball": (props.APIS_STATE.get("last") if props else ""),
                 "s365": (props.S365_STATE.get("last") if props else ""),
@@ -1301,6 +1378,8 @@ Jei žaidėjas nežaidė – "played": false. Jei patikimo šaltinio neradai –
 
     async def run(self):
         await asyncio.sleep(90)
+        if props and hasattr(props, "search_lib"):           # paieškos biblioteka (ddgs) – įsidiegia fone
+            asyncio.get_running_loop().run_in_executor(None, props.search_lib)
         asyncio.get_running_loop().create_task(self.settle_loop())
         last_collect = 0
         while True:
