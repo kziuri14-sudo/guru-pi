@@ -183,9 +183,36 @@ def find(b):
     """Grąžina LiveScore rungtynes, kurios atitinka statymą, arba None.
     Pirma ieškom ±30 val. nuo paskelbimo; neradus – iki 7 dienų į priekį (statymas gali būti iš anksto)."""
     e = _find(b)
+    if (e is None or e.get("_ended")) and b.get("home"):
+        e2 = _find(b, ahead_h=7 * 24)                   # ir kai rasta tik jau pasibaigusi (pvz. praeitos nakties) –
+        if e2 is not None and not e2.get("_ended"):     # gal statymas būsimoms rungtynėms
+            e = e2
     if e is None and b.get("home") and b.get("away"):
-        e = _find(b, ahead_h=7 * 24)
+        e = _one_team(b)                                 # varžovas pavadintas kitaip (pvz. „Körfez“ ↔ „Manisa BB“)
     return e
+
+
+def _one_team(b):
+    """Viena komanda sutampa, kita – ne: imam tik jei tai VIENINTELĖS tos komandos rungtynės ±30 val. nuo paskelbimo
+    ir prasidėjo ne anksčiau kaip 3 val. iki paskelbimo."""
+    out = []
+    for keep in ("home", "away"):
+        nb = dict(b, away=None, home=b.get(keep))
+        e = _find(nb)
+        if e is None or e.get("_ended"):
+            continue
+        created = datetime.fromisoformat(b.get("created", b["kickoff"]))
+        if e["_start"] < created - timedelta(hours=3):
+            continue
+        other = e["_t2"] if not e.get("_swapped") else e["_t1"]
+        out.append((keep, e, other))
+    if len(out) != 1:
+        return None
+    keep, e, other = out[0]
+    sw = e.get("_swapped")
+    if keep == "away":                                   # signalo „away“ rasta kaip e._swapped=False → ji namų pusėje
+        sw = not sw
+    return dict(e, _swapped=sw, _league=f"{e['_league']} · varžovas LiveScore'e: {other}")
 
 
 def _find(b, ahead_h=30):
@@ -247,7 +274,8 @@ def _find(b, ahead_h=30):
     if not best:
         return None
     e, swapped = best[1], best[2]
-    return dict(e, _swapped=swapped)
+    ended = e["_start"] + timedelta(hours=_DUR.get(e.get("_sport"), 3.0)) < created
+    return dict(e, _swapped=swapped, _ended=ended)
 
 
 # ---------------------------------------------------------------- rezultato skaičiavimas
@@ -321,7 +349,7 @@ def score_for(e, period):
     if sp == "tennis" and period.startswith("s"):
         return _scores(e, f"Tr1S{period[1]}", f"Tr2S{period[1]}")
     if sp == "hockey" and period.startswith("q"):
-        return _scores(e, f"Tr1P{period[1]}", f"Tr2P{period[1]}")
+        return _scores(e, f"Tr1Pe{period[1]}", f"Tr2Pe{period[1]}") or _scores(e, f"Tr1P{period[1]}", f"Tr2P{period[1]}")
     return None
 
 

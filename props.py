@@ -327,6 +327,13 @@ def _player_bet(leg):
                     return None, None, "rungtynės dar nesibaigė"
                 st = _get(f"{EL}/v3/competitions/{comp}/seasons/{comp}{y}/games/{game['gameCode']}/stats", ttl=86400)
                 players, src = _players_el(st), ("EuroLeague" if comp == "E" else "EuroCup")
+        if players is None and not re.search(r"\b(nba|wnba|ncaa|euroleag|eurocup)\b", lg):
+            try:
+                g = _lkl_game(leg)                       # LKL / KMT – oficialus lkl.lt protokolas
+            except Exception:
+                g = None
+            if g:
+                players, src = _players_lkl(g[2]), "LKL.lt"
         if players is None:
             path, ev = _espn_game(leg, ["basketball/nba", "basketball/wnba", "basketball/mens-college-basketball"])
             if ev:
@@ -1440,3 +1447,78 @@ def mma_event(leg):
                 "_league": f"ESPN {path} (lygiosios / be sprendimo)", "_start": t, "Ewt": 3, "_swapped": sw}
     return {"_t1": nm[0], "_t2": nm[1], "Tr1": 1 if w[0] else 0, "Tr2": 1 if w[1] else 0, "Eps": "FT",
             "_sport": "mma", "_league": f"ESPN {path}", "_start": t, "Ewt": 1 if w[0] else 2, "_swapped": sw}
+
+
+# ---------------------------------------------------------------- LKL / KMT žaidėjų statistika (oficialus lkl.lt)
+LKL = "https://lkl.lt"
+_lkl_c = {}
+
+
+def _lkl_html(path, ttl=900):
+    hit = _lkl_c.get(path)
+    if hit and time.time() - hit[0] < ttl:
+        return hit[1]
+    req = urllib.request.Request(LKL + path, headers={"User-Agent": HDR.get("User-Agent", "Mozilla/5.0"),
+                                                      "Accept-Language": "lt"})
+    with urllib.request.urlopen(req, timeout=25) as r:
+        h = r.read().decode("utf-8", "ignore")
+    _lkl_c[path] = (time.time(), h)
+    return h
+
+
+def _lkl_games():
+    """[(id, namų, svečių)] – paskutinės LKL ir Karaliaus Mindaugo taurės rungtynės iš lkl.lt rezultatų puslapių."""
+    out = []
+    for path in ("/rezultatai", "/rezultatai?page=2", "/karaliaus-mindaugo-taure/rezultatai"):
+        try:
+            h = _lkl_html(path)
+        except Exception:
+            continue
+        for chunk in h.split("battle-row")[1:]:
+            alts = re.findall(r'alt="([^"]+)"', chunk[:3000])
+            gid = re.search(r"/rungtynes/(\d+)", chunk[:3000])
+            if len(alts) >= 2 and gid:
+                out.append((gid.group(1), html.unescape(alts[0]), html.unescape(alts[1])))
+    return out
+
+
+def _lkl_game(leg):
+    k, c = _when(leg)
+    best = None
+    for gid, h, a in _lkl_games():
+        ok, sw = _pair(leg, [h], [a])
+        if not ok:
+            continue
+        try:
+            bx = _get(f"{LKL}/api/livestream/boxscore/{gid}", ttl=1800)
+        except Exception:
+            continue
+        upd = [v.get("updated_at") for v in (bx.get("gameStatistics") or {}).values() if isinstance(v, dict)]
+        try:
+            t = datetime.fromisoformat(str(max(u for u in upd if u)).replace("Z", "+00:00")).astimezone().replace(tzinfo=None)
+        except Exception:
+            continue
+        if not (k - timedelta(hours=6) <= t <= k + timedelta(hours=40)):
+            continue                                       # kitos to paties poros rungtynės
+        gap = abs((t - k).total_seconds())
+        if best is None or gap < best[0]:
+            best = (gap, gid, bx, t)
+    return best
+
+
+def _players_lkl(bx):
+    out = []
+    for side in ("home", "away"):
+        for p in ((bx.get("boxscore") or {}).get(side) or {}).get("players") or []:
+            slug = str(p.get("slug") or "")
+            parts = slug.split("-") if slug else _fold((p.get("name") or {}).get("value")).split()
+            val = lambda k: (p.get(k) or {}).get("value")
+            try:
+                v = {"pts": float(val("points") or 0), "reb": float(val("total_rebounds") or 0),
+                     "ast": float(val("assists") or 0), "stl": float(val("steals") or 0),
+                     "blk": float(val("blocks") or 0), "3pm": float(str(val("fg3") or "0/0").split("/")[0])}
+            except Exception:
+                v = {}
+            out.append({"first": " ".join(parts[:-1]), "last": parts[-1] if parts else "",
+                        "played": str(val("time") or "00:00") not in ("00:00", "0:00", ""), "v": v})
+    return out

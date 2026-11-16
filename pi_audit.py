@@ -558,6 +558,17 @@ class Auditor:
                         l.pop("note", None)
                         l["tries"] = 0
             self.d["settle_ver"] = 18
+        if self.d.get("settle_ver", 0) < 19:          # LKL protokolai, ledo ritulio periodai, kitaip pavadintas varžovas
+            for b in self.d["bets"]:
+                if b["status"] not in ("unknown", "pending") or b.get("by_group"):
+                    continue
+                b["status"], b["tries"], b["next"] = "pending", 0, 0
+                for l in b["legs"]:
+                    if l.get("status") in (None, "unknown", "pending"):
+                        l["status"], l["detail"] = "pending", None
+                        l.pop("note", None)
+                        l["tries"] = 0
+            self.d["settle_ver"] = 19
         self._keys = {(b["c"], b["mid"]) for b in self.d["bets"]}
         self._done, self._last_save, self._sum = [], 0, (0, None)
         self._ocr = False
