@@ -7,6 +7,7 @@
 Jei rungtynių ar žaidėjo rasti nepavyksta, grąžinama None – toks statymas į statistiką neįskaitomas.
 """
 import json
+import html
 import re
 import threading
 import time
@@ -340,6 +341,8 @@ def _soccer_bet(leg):
 
 def is_prop(leg):
     t = _fold(f"{leg.get('pick')} {leg.get('market') or ''}")
+    if R.BTTS_RE.search(t):
+        return False                                  # „abi komandos įmuš“ – ne žaidėjo statymas
     if leg.get("subject"):
         return True
     if CORNER_RE.search(t) or CARD_RE.search(t) or SHOTS_RE.search(t):
@@ -398,9 +401,58 @@ def settle(leg):
     return res
 
 
+SCORER_RE = re.compile(r"goal ?scorer|anytime|to score|score a goal|imus ivarti|pelnys ivarti|ivarcio autorius|ives ivarti")
+
+
+def _scorer(leg):
+    """Futbolas: ar žaidėjas įmušė įvartį (ESPN įvykiai; jei nėra – internetas)."""
+    who = leg.get("subject") or re.sub(r"(?i)anytime|goal ?scorer|to score|score a goal|\(.*?\)|-|–", " ",
+                                       str(leg.get("pick") or "")).strip()
+    toks = [x for x in _fold(who).split() if len(x) > 2]
+    if not toks:
+        return None, None, "neaišku, kuris žaidėjas"
+    if not leg.get("subject") and any(R.same(who, leg.get(x)) for x in ("home", "away") if leg.get(x)):
+        return None, None, "komandos įvarčio rinka – nežinoma rinka"
+    no = bool(re.search(r"\b(no|ne)\s*$", _fold(leg.get("pick"))))
+    path, ev = _espn_game(leg, [f"soccer/{x}" for x in SOCCER])
+    if ev:
+        if ((ev.get("competitions") or [{}])[0].get("status") or {}).get("type", {}).get("state") != "post":
+            return None, None, "rungtynės dar nesibaigė"
+        su = _get(f"{ESPN}/{path}/summary?event={ev['id']}", ttl=86400)
+        names = []
+        for k in su.get("keyEvents") or []:
+            typ = _fold(((k.get("type") or {}).get("text")) or (k.get("type") or {}).get("type"))
+            if not k.get("scoringPlay") or "own" in typ:
+                continue
+            for pt in k.get("participants") or []:
+                names.append(_fold(((pt.get("athlete") or {}).get("displayName")) or ""))
+                break
+        if names or (su.get("keyEvents") is not None):
+            last = toks[-1]
+            hit = any(last in n.split() or (len(toks) > 1 and toks[0] in n.split() and last[:4] in n) for n in names)
+            res = "won" if hit != no else "lost"
+            return res, f"{who}: {'įmušė' if hit else 'neįmušė'} (ESPN: {', '.join(n.title() for n in names) or 'įvarčių nebuvo'})", "ok"
+    if WEB_STAT:
+        r = WEB_STAT(leg, f"kiek įvarčių įmušė žaidėjas „{who}“ (be savų įvarčių)")
+        if r and r.get("played") is False:
+            return "push", f"{who} nežaidė – grąžinama", "ok"
+        try:
+            v = float(r["value"])
+            hit = v >= 1
+            return ("won" if hit != no else "lost"), f"{who}: įvarčių {v:g} – internetas: {str(r.get('source'))[:60]}", "ok"
+        except Exception:
+            pass
+    return None, None, "įvarčių autoriai nerasti"
+
+
 def _settle(leg):
     """(status, detail, info) kaip results.settle; status None – nepavyko."""
     t = _fold(f"{leg.get('pick')} {leg.get('market') or ''}")
+    if SCORER_RE.search(t) and (_sp(leg) or "soccer") == "soccer" and not R.BTTS_RE.search(t):
+        try:
+            return _scorer(leg)
+        except Exception as e:
+            return None, None, f"statistikos šaltinis nepasiekiamas: {str(e)[:80]}"
     try:
         if (CORNER_RE.search(t) or CARD_RE.search(t) or SHOTS_RE.search(t)) and not leg.get("subject"):
             return _soccer_bet(leg)
@@ -979,7 +1031,7 @@ ODDS_STATE = {"last": "", "day": "", "used": 0}
 def _apis_fixture(leg):
     """Rungtynės iš API-Sports dienos sąrašo (futbolas) – grąžina (įrašas, ar apversta)."""
     if (_sp(leg) or "soccer") != "soccer":
-        return None, False
+        return None, False, None
     k, c = _when(leg)
     best = None
     for d in (k.date(), k.date() - timedelta(days=1), k.date() + timedelta(days=1)):
@@ -1080,7 +1132,7 @@ def _wanted(leg, m, sw):
             return "Double Chance", [v]
         sd = _side_of(leg.get("team"), m, sw)
         return ("Double Chance", ["Home/Draw" if sd == "Home" else "Draw/Away"]) if sd in ("Home", "Away") else None
-    if side == "btts":
+    if side == "btts" or R.BTTS_RE.search(pick):
         return "Both Teams Score", ["No" if re.search(r"\b(no|ne)\b", pick) else "Yes"]
     if side in ("over", "under") and line is not None:
         if leg.get("team") and _side_of(leg.get("team"), m, sw) in ("Home", "Away"):
@@ -1131,91 +1183,48 @@ def market_odds(leg):
             "mk": f"{name}: {vals[0]}", "ko": t.isoformat(timespec="minutes") if t else None}
 
 
-# ---------------------------------------------------------------- paieška internete be Google API rakto
-# Kai Gemini paieška išnaudota: DuckDuckGo / Bing / Brave ir kt. per „ddgs“ biblioteką (Raspberry ją įsidiegia pats),
-# o jei jos nėra – DuckDuckGo HTML puslapis. Rezultatų ištraukas perskaito AI (Groq) ir grąžina tik tai, kas JOSE parašyta.
-SEARCH_STATE = {"lib": None, "last": "", "n": 0, "ok": 0}
+# ---------------------------------------------------------------- paieška internete per oficialų API (Tavily)
+# Paieškos sistemų puslapių (Google, DuckDuckGo, Bing) neskenuojam – jie tai blokuoja (CAPTCHA), o apeidinėti negalima.
+# Tavily – paieškos API, skirtas AI: nemokamai 1000 paieškų/mėn., raktas – app.tavily.com (įrašomas „#pi_key tavily …“).
+SEARCH_STATE = {"last": "", "n": 0, "ok": 0, "month": "", "used": 0}
 _UA = "Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 
 
-_SEARCH_LOCK = threading.Lock()
-
-
 def search_lib():
-    """ddgs biblioteka; jei nėra – bandom įdiegti (vieną kartą per paleidimą)."""
-    if SEARCH_STATE["lib"] is not None:
-        return SEARCH_STATE["lib"] or None
-    if not _SEARCH_LOCK.acquire(timeout=1):
-        return None                                       # kitas srautas šiuo metu diegia – kol kas be jos
-    try:
-        return _search_lib()
-    finally:
-        _SEARCH_LOCK.release()
-
-
-def _search_lib():
-    if SEARCH_STATE["lib"] is not None:
-        return SEARCH_STATE["lib"] or None
-    for mod in ("ddgs", "duckduckgo_search"):
-        try:
-            m = __import__(mod)
-            SEARCH_STATE["lib"] = m
-            return m
-        except Exception:
-            pass
-    try:
-        import subprocess, sys
-        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--break-system-packages", "ddgs"],
-                       timeout=600, capture_output=True)
-        import importlib
-        importlib.invalidate_caches()
-        m = __import__("ddgs")
-        SEARCH_STATE["lib"] = m
-        return m
-    except Exception:
-        SEARCH_STATE["lib"] = False
-        return None
-
-
-def _ddg_html(q, n=8):
-    data = urllib.parse.urlencode({"q": q, "kl": "wt-wt"}).encode()
-    req = urllib.request.Request("https://html.duckduckgo.com/html/", data=data, method="POST",
-                                 headers={"User-Agent": _UA, "Content-Type": "application/x-www-form-urlencoded"})
-    with urllib.request.urlopen(req, timeout=25) as r:
-        h = r.read().decode("utf-8", "ignore")
-    out = []
-    for m in re.finditer(r'class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>.*?class="result__snippet"[^>]*>(.*?)</a>',
-                         h, re.S):
-        url = urllib.parse.unquote(re.sub(r"^.*?uddg=([^&]+).*$", r"\1", m.group(1)))
-        strip = lambda s: re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", s)).strip()
-        out.append({"title": strip(m.group(2)), "href": url, "body": strip(m.group(3))})
-        if len(out) >= n:
-            break
-    return out
+    return None                                           # (suderinamumui su senesniu pi_audit.py)
 
 
 def web_search(q, n=8):
-    """[{title, href, body}] – paieškos rezultatai (be API rakto)."""
-    SEARCH_STATE["n"] += 1
-    lib = search_lib()
-    if lib:
-        try:
-            D = getattr(lib, "DDGS")
-            with D() as s:
-                res = list(s.text(q, max_results=n) or [])
-            if res:
-                SEARCH_STATE["last"] = f"ddgs ok ({len(res)})"
-                return [{"title": r.get("title", ""), "href": r.get("href") or r.get("url", ""),
-                         "body": r.get("body", "")} for r in res]
-        except Exception as e:
-            SEARCH_STATE["last"] = f"ddgs {type(e).__name__}"
-    try:
-        res = _ddg_html(q, n)
-        SEARCH_STATE["last"] = f"ddg html ({len(res)})"
-        return res
-    except Exception as e:
-        SEARCH_STATE["last"] = f"ddg html {type(e).__name__}"
+    """[{title, href, body}] – paieškos rezultatai per Tavily API (jei įrašytas raktas)."""
+    key = (CFG or {}).get("tavily_key")
+    if not key:
+        SEARCH_STATE["last"] = "nėra Tavily rakto"
         return []
+    mon = datetime.now().strftime("%Y-%m")
+    if SEARCH_STATE["month"] != mon:
+        SEARCH_STATE["month"], SEARCH_STATE["used"] = mon, 0
+    if SEARCH_STATE["used"] >= int((CFG or {}).get("tavily_per_month", 950)):
+        SEARCH_STATE["last"] = "Tavily mėnesio limitas"
+        return []
+    body = json.dumps({"query": q, "max_results": n, "search_depth": "basic", "include_answer": False,
+                       "topic": "general"}).encode()
+    req = urllib.request.Request("https://api.tavily.com/search", data=body, method="POST",
+                                 headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"})
+    SEARCH_STATE["n"] += 1
+    SEARCH_STATE["used"] += 1
+    try:
+        with urllib.request.urlopen(req, timeout=40) as r:
+            d = json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        SEARCH_STATE["last"] = f"Tavily {e.code}"
+        return []
+    except Exception as e:
+        SEARCH_STATE["last"] = f"Tavily {type(e).__name__}"
+        return []
+    res = [{"title": x.get("title", ""), "href": x.get("url", ""), "body": x.get("content", "")}
+           for x in d.get("results") or []]
+    SEARCH_STATE["last"] = f"Tavily ok ({len(res)})"
+    return res
 
 
 def page_text(url, limit=5000):

@@ -237,6 +237,7 @@ NE statymas: reklama, VIP pardavimas, pasigyrimas laimėjimu, rezultato praneši
 statistika, klausimai, pokalbis, nuomonė be konkretaus pasirinkimo.
 Grąžink TIK JSON:
 {{"msgs": [{{"n": numeris, "combo": true/false, "total_odds": skaičius arba null,
+  "placed": "YYYY-MM-DD HH:MM" – kada kuponas pastatytas, jei tai matosi kupono nuotraukoje, kitaip null,
   "bets": [{{"sport": "soccer/basketball/tennis/hockey/handball/volleyball/baseball/american_football/mma/esports/kita",
     "league": "...", "home": "...", "away": "...",
     "date": "YYYY-MM-DD" arba null, "time": "HH:MM" arba null,
@@ -245,7 +246,7 @@ Grąžink TIK JSON:
     "player": "žaidėjo vardas, jei statoma už žaidėjo statistiką (taškai, perdavimai, atkovoti, įvarčiai), kitaip null"}}]}}]}}
 Žinučių be statymo NEĮTRAUK. Jei statymų nėra – {{"msgs": []}}.
 Lygiosios = side "Win", team "Draw". „Abi įmuš“ = BTTS (pick „Yes“/„No“). „1X“, „X2“, „12“ = DC.
-Datą imk iš žinutės arba jos laiko. Komandas rašyk angliškai. NIEKO NESUGALVOK – ko nėra, rašyk null.
+Datą imk iš žinutės arba jos laiko. „time“ – rungtynių pradžia (jei parašyta), ne žinutės laikas. Komandas rašyk angliškai. NIEKO NESUGALVOK – ko nėra, rašyk null.
 
 ŽINUTĖS:
 {msgs}"""
@@ -488,6 +489,18 @@ class Auditor:
                         l["status"], l["detail"] = "pending", None
                         l.pop("note", None)
             self.d["settle_ver"] = 15
+        if self.d.get("settle_ver", 0) < 16:          # BTTS, „komanda & over“, įvarčių autoriai, alias'ai – perskaičiuojam neišspręstus
+            for b in self.d["bets"]:
+                if b["status"] in ("unknown", "pending"):
+                    b["status"], b["tries"], b["next"] = "pending", 0, 0
+                    b.pop("mkt", None)
+                    for l in b["legs"]:
+                        if l.get("status") in (None, "unknown", "pending"):
+                            l["status"], l["detail"] = "pending", None
+                            l.pop("note", None)
+                            l.pop("mkt", None)
+            self.d["web_cache"] = {}
+            self.d["settle_ver"] = 16
         self._keys = {(b["c"], b["mid"]) for b in self.d["bets"]}
         self._done, self._last_save, self._sum = [], 0, (0, None)
         self._ocr = False
@@ -781,8 +794,8 @@ Jei tekste atsakymo nėra – {{"found": false}}.
 """
 
     def _web_search(self, prompt, queries, check=None):
-        """Nemokama paieška (DuckDuckGo/Bing per ddgs) + Groq perskaito rezultatus. check(r, ctx) – ar atsakymas tikrai tekste."""
-        if not props or not hasattr(props, "search_context") or not self.cfg.get("groq_key"):
+        """Paieška per Tavily API + Groq perskaito rezultatus. check(r, ctx) – ar atsakymas tikrai tekste."""
+        if not props or not hasattr(props, "search_context") or not self.cfg.get("groq_key") or not self.cfg.get("tavily_key"):
             return None
         if time.time() < self.d.get("sweb_pause", 0):
             return None
@@ -821,7 +834,11 @@ Jei tekste atsakymo nėra – {{"found": false}}.
             return self._web_groq(prompt)
         body = json.dumps({"contents": [{"role": "user", "parts": [{"text": prompt}]}],
                            "tools": [{"google_search": {}}], "generationConfig": {"temperature": 0}}).encode()
-        for model in (self.cfg.get("gemini_web_models") or ["gemini-3.5-flash", "gemini-3.5-flash-lite"]):
+        pz = self.d.setdefault("web_mpause", {})
+        for model in (self.cfg.get("gemini_web_models") or ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash",
+                                                            "gemini-2.5-flash-lite", "gemini-2.0-flash"]):
+            if pz.get(model, 0) > time.time():
+                continue                                   # šio modelio paieškos limitas – bandom kitą (kiekvienas turi savo)
             req = urllib.request.Request(
                 f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent", data=body,
                 method="POST", headers={"Content-Type": "application/json", "x-goog-api-key": self.cfg["gemini_key"]})
@@ -842,11 +859,13 @@ Jei tekste atsakymo nėra – {{"found": false}}.
                 except Exception:
                     pass
                 if e.code == 429:
-                    day = "PerDay" in eb or "per day" in eb.lower()
-                    self.d["web_pause"] = time.time() + (3 * 3600 if day else 90)
-                    self._err("web 429 " + model + ": " + re.sub(r"\s+", " ", eb)[:160])
-                    return self._web_groq(prompt)
-                self._err(f"web {e.code}: " + re.sub(r"\s+", " ", eb)[:80])
+                    day = "PerDay" in eb or "per day" in eb.lower() or "quota" in eb.lower()
+                    pz[model] = time.time() + (3 * 3600 if day else 90)
+                    self._err("web 429 " + model)
+                    continue
+                if e.code in (400, 403, 404):
+                    pz[model] = time.time() + 86400        # modelio nėra / paieška jam neleidžiama
+                self._err(f"web {e.code} {model}: " + re.sub(r"\s+", " ", eb)[:60])
             except Exception as e:
                 self._err(f"web: {type(e).__name__}")
         return self._web_groq(prompt)
@@ -1054,6 +1073,14 @@ Jei tekste atsakymo nėra – {{"found": false}}.
                 continue
             if (cid, mid) in self._keys:
                 continue
+            created = t[:16]
+            try:                                           # kuponas pastatytas anksčiau, nei įkeltas – imam pastatymo laiką
+                pl = datetime.fromisoformat(str(m.get("placed") or "").strip().replace(" ", "T")[:16])
+                tt = datetime.fromisoformat(t[:16])
+                if tt - timedelta(days=2) <= pl < tt:
+                    created = pl.isoformat(timespec="minutes")
+            except Exception:
+                pass
             legs = []
             for b in (m.get("bets") or [])[:8]:
                 if not isinstance(b, dict) or not b.get("home"):
@@ -1069,7 +1096,7 @@ Jei tekste atsakymo nėra – {{"found": false}}.
                              "line": b.get("line"), "pick": b.get("pick"), "odds": b.get("odds"),
                              "women": b.get("women") if isinstance(b.get("women"), bool) else None,
                              "subject": b.get("player") or None,
-                             "kickoff": kick, "created": t[:16], "status": "pending"})
+                             "kickoff": kick, "created": created, "status": "pending"})
             if legs:
                 combo = len(legs) > 1
                 odds = m.get("total_odds") if combo else legs[0].get("odds")
@@ -1387,8 +1414,6 @@ Jei tekste atsakymo nėra – {{"found": false}}.
 
     async def run(self):
         await asyncio.sleep(90)
-        if props and hasattr(props, "search_lib"):           # paieškos biblioteka (ddgs) – įsidiegia fone
-            asyncio.get_running_loop().run_in_executor(None, props.search_lib)
         asyncio.get_running_loop().create_task(self.settle_loop())
         last_collect = 0
         while True:

@@ -379,13 +379,14 @@ def setup_remote(client):
     async def on_me(ev):
         m = ev.message
         txt = m.message or ""
-        mk = re.match(r"(?is)\s*#pi_key\s+(apifootball|api-football|apisports|api-sports|api)\s+(\S+)", txt)
+        mk = re.match(r"(?is)\s*#pi_key\s+(apifootball|api-football|apisports|api-sports|api|tavily)\s+(\S+)", txt)
         if mk:                                            # raktas įrašomas tik Raspberry – ne į GitHub
-            CFG["apisports_key"] = mk.group(2).strip()
+            fld = "tavily_key" if mk.group(1).lower() == "tavily" else "apisports_key"
+            CFG[fld] = mk.group(2).strip()
             for path in (BASE / "pi_config.json", BOOT / "pi_config.json"):
                 try:
                     cur = json.loads(path.read_text("utf-8"))
-                    cur["apisports_key"] = CFG["apisports_key"]
+                    cur[fld] = CFG[fld]
                     path.write_text(json.dumps(cur, ensure_ascii=False, indent=1), "utf-8")
                 except Exception as e:
                     log.info("raktas %s: %s", path, e)
@@ -393,8 +394,12 @@ def setup_remote(client):
                 await m.delete()                          # žinutę su raktu ištrinam iš Saved Messages
             except Exception:
                 pass
-            await asyncio.to_thread(ntfy, "🔑 API-Sports raktas išsaugotas",
-                                    "Futbolas, krepšinis, ledo ritulys – Raspberry naudos rezultatų paieškai. Žinutė su raktu ištrinta.", None, None, 3)
+            if fld == "tavily_key":
+                await asyncio.to_thread(ntfy, "🔑 Tavily raktas išsaugotas",
+                                        "Paieška internete įjungta – nerastų rungtynių rezultatų ieškos internete. Žinutė su raktu ištrinta.", None, None, 3)
+            else:
+                await asyncio.to_thread(ntfy, "🔑 API-Sports raktas išsaugotas",
+                                        "Futbolas, krepšinis, ledo ritulys – Raspberry naudos rezultatų paieškai. Žinutė su raktu ištrinta.", None, None, 3)
             return
         if "#pi_status" in txt:
             try:

@@ -46,7 +46,18 @@ ALIAS = {"psg": "paris saint germain", "man utd": "manchester united", "man city
          "turkey": "turkiye", "czech republic": "czechia", "czech rep": "czechia", "usa": "united states",
          "south korea": "korea republic", "korea": "korea republic", "ivory coast": "cote d ivoire",
          "bosnia": "bosnia and herzegovina", "bosnia herzegovina": "bosnia and herzegovina",
-         "holland": "netherlands", "republic of ireland": "ireland", "dr congo": "congo dr"}
+         "holland": "netherlands", "republic of ireland": "ireland", "dr congo": "congo dr",
+         "pao": "panathinaikos", "pana": "panathinaikos", "oly": "olympiacos", "olympiakos": "olympiacos",
+         "efes": "anadolu efes", "fener": "fenerbahce", "fenerbahce beko": "fenerbahce", "gala": "galatasaray",
+         "real": "real madrid", "rm": "real madrid", "atleti": "atletico madrid", "milan": "ac milan",
+         "virtus": "virtus bologna", "partizan": "partizan belgrade", "crvena zvezda": "red star belgrade",
+         "zvezda": "red star belgrade", "kzs": "zalgiris kaunas", "lietkabelis": "lietkabelis panevezys",
+         "wolves": "wolverhampton", "nottm forest": "nottingham forest", "sheff utd": "sheffield united",
+         "athletic": "athletic bilbao", "betis": "real betis", "sociedad": "real sociedad", "gladbach": "monchengladbach",
+         "leverkusen": "bayer leverkusen", "napoli": "ssc napoli", "roma": "as roma", "lazio": "ss lazio",
+         "sporting": "sporting cp", "benfica": "sl benfica", "porto": "fc porto", "ajax": "ajax amsterdam",
+         "psv": "psv eindhoven", "celtic": "celtic glasgow", "rangers": "glasgow rangers",
+         "uae": "united arab emirates", "north macedonia": "macedonia", "kiorfez": "korfez", "korfez basket": "korfez"}
 _cache = {}
 WEB = None          # Raspberry priskiria: paieška internete (Google), kai kiti šaltiniai neturi
 
@@ -215,6 +226,8 @@ def find(b):
                     continue
                 score = abs((e["_start"] - ref).total_seconds()) / 3600 + _penalty(b, e) + \
                     (0 if sport == sports[0] else 2) + (0 if away else 1)
+                if e["_start"] + timedelta(hours=_DUR.get(sport, 3.0)) < created:
+                    score += 5                           # jau pasibaigusios iki paskelbimo – renkamės kitas, jei yra
                 if best is None or score < best[0]:
                     best = (score, e, sw_)
         if best and best[0] < 6:
@@ -309,6 +322,9 @@ PLAYER_RE = re.compile(r"\b(assist\w*|rebound\w*|3 ?pt\w*|3 ?pointer\w*|three\w*
                        r"to score|pelnys|ivarti mus)\b")
 
 
+BTTS_RE = re.compile(r"\bbtts\b|both teams? (to )?score|both to score|abi komandos (pelnys|imus|ives)|abi imus|\bgg\b|\bng\b")
+
+
 def evaluate(b, e):
     """Grąžina (status, detail) arba (None, priežastis), jei šio statymo pagal LiveScore įvertinti negalima."""
     st = state(e)
@@ -341,8 +357,28 @@ def evaluate(b, e):
     mw = re.search(r"(?<![A-Za-z0-9])[WP]\s?([12])(?![A-Za-z0-9])", str(b.get("pick") or ""))
     if side == "Win" and mw:                               # W1 = namų, W2 = svečių komanda
         team = (b.get("home") if mw.group(1) == "1" else b.get("away")) or team
-    if b.get("subject") or PLAYER_RE.search(pick + " " + _fold(b.get("market"))):
+    if BTTS_RE.search(pick):
+        side = "BTTS"
+        team = "no" if re.search(r"\b(no|ne)\b", pick) else "yes"
+    elif b.get("subject") or PLAYER_RE.search(pick + " " + _fold(b.get("market"))):
         return None, "žaidėjo statistika – LiveScore neturi"
+    raw = re.sub(r"[^a-z0-9&+.,]+", " ", unicodedata.normalize("NFKD", str(b.get("pick") or "")).encode("ascii", "ignore")
+                 .decode().lower()).strip()
+    mc = re.search(r"^(.*?)\s(?:&|and|ir|\+)\s.*?\b(over|under|daugiau|maziau)\s*(\d+(?:[.,]\d+)?)", raw)
+    if mc and side not in ("BTTS",) and not re.search(r"\bbtts|abi|both", pick):
+        tm = mc.group(1).strip()                       # „Edmonton & Over 5.5“ – pergalė IR totalas
+        if same(tm, b.get("home")) or same(tm, b.get("away")):
+            mh = mscore(tm, b.get("home")) >= mscore(tm, b.get("away"))
+            if sp in ("hockey", "basketball") and period == "ft" and _i(e.get("Ewt")) in (1, 2):
+                won = ((_i(e.get("Ewt")) == 1) != bool(sw)) == mh
+            else:
+                won = (hs > as_) if mh else (as_ > hs)
+            ln = float(mc.group(3).replace(",", "."))
+            tot = hs + as_
+            over = mc.group(2) in ("over", "daugiau")
+            ok_t = (tot > ln) if over else (tot < ln)
+            return ("won" if won and ok_t else "lost"), \
+                f"rezultatas {shown}{extra} → {tm} {'laimėjo' if won else 'nelaimėjo'}, total {tot} ({'over' if over else 'under'} {ln:g})"
     mine_home = None
     if team and _fold(team) not in ("draw", "x", "lygiosios", "total", "yes", "no", "taip", "ne", "over", "under"):
         sh, sa = mscore(team, b.get("home")), mscore(team, b.get("away"))
