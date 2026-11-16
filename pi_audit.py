@@ -1384,7 +1384,11 @@ Jei tekste atsakymo nėra – {{"found": false}}.
                     old = max(self._kick(l, b) for l in b["legs"]) < now - timedelta(hours=20)
                 except Exception:
                     old = True
-                if (old and b["tries"] >= 5) or b["tries"] > 12:
+                notfound = all(str(l.get("note") or "").startswith("nerasta") for l in pend)
+                young = str(b["t"])[:10] >= (now - timedelta(days=21)).strftime("%Y-%m-%d")
+                if notfound and young:                    # rungtynių niekur nėra – gal jos dar tik bus (pvz. MMA turnyras
+                    b["next"] = time.time() + 6 * 3600   # po 2 sav.) – tikrinam kas 6 val. iki 3 savaičių
+                elif (old and b["tries"] >= 5) or b["tries"] > 12:
                     b["status"] = "unknown"          # rezultato rasti nepavyko – į statistiką neskaičiuojam
                     for l in pend:
                         l["detail"] = (l.get("note") or "rezultato nerasta") + " – neįskaitoma"

@@ -14,7 +14,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import results as R
 
@@ -1778,3 +1778,81 @@ def _players_nhl(bx):
                 out.append({"first": " ".join(parts[:-1]), "last": parts[-1] if parts else "",
                             "played": toi not in ("00:00", "0:00"), "v": v})
     return out
+
+
+# ---------------------------------------------------------------- UTMA (Lietuvos kovų turnyras) – 77.lt rezultatai
+UTMA_URL = "https://77.lt/rezultatai/utma"
+UTMA_STATE = {"last": "", "off_until": 0}
+_LT_MON = {"saus": 1, "vas": 2, "kov": 3, "bal": 4, "geg": 5, "birž": 6, "birz": 6, "liep": 7, "rugp": 8, "rugs": 9,
+           "spal": 10, "lapkr": 11, "gruod": 12}
+
+
+def _utma_fights():
+    """[(data, namų, svečių, laimėtojas 'h'/'a'/None, būdas)] iš 77.lt (be apeidinėjimo – jei neprieinama, None)."""
+    if time.time() < UTMA_STATE["off_until"]:
+        return None
+    try:
+        req = urllib.request.Request(UTMA_URL, headers={"User-Agent": HDR.get("User-Agent", "Mozilla/5.0"),
+                                                        "Accept-Language": "lt"})
+        with urllib.request.urlopen(req, timeout=25) as r:
+            h = r.read().decode("utf-8", "ignore")
+    except Exception as e:
+        UTMA_STATE["last"], UTMA_STATE["off_until"] = type(e).__name__, time.time() + 3 * 3600
+        return None
+    if "l77-game" not in h:
+        UTMA_STATE["last"], UTMA_STATE["off_until"] = "puslapis be rezultatų (apsauga?)", time.time() + 3 * 3600
+        return None
+    UTMA_STATE["last"] = "ok"
+    out, today = [], datetime.now().date()
+    for blk in h.split('<div class="l77-game ')[1:]:
+        blk = blk[:4000]
+        names = [html.unescape(x).strip() for x in re.findall(r'class="l77-gt-name">([^<]+)<', blk)]
+        if len(names) < 2:
+            continue
+        m = re.search(r'l77-game-when"><b>\S+\s+([a-ząčęėįšųūž]+)\.?\s+(\d{1,2})</b>', blk)
+        d = None
+        if m:
+            mon = next((v for k, v in _LT_MON.items() if m.group(1).startswith(k)), None)
+            if mon:
+                d = date(today.year, mon, int(m.group(2)))
+                if d > today + timedelta(days=60):
+                    d = date(today.year - 1, mon, int(m.group(2)))
+        hw = bool(re.search(r'l77-gt--home is-win', blk))
+        aw = bool(re.search(r'l77-gt--away is-win', blk))
+        meth = re.search(r'l77-method[^"]*"><b>([^<]+)</b>', blk)
+        final = blk.startswith("is-final")
+        out.append((d, names[0], names[1], "h" if hw else "a" if aw else None, meth.group(1) if meth else "", final))
+    return out
+
+
+def utma_event(leg):
+    sp = _fold(f"{leg.get('sport')} {leg.get('league')} {leg.get('pick')}")
+    if not re.search(r"\bmma\b|utma|fight|kov\w*|box|boks", sp):
+        return None
+    fights = _utma_fights()
+    if not fights:
+        return None
+    k, c = _when(leg)
+    ln = lambda x: [w for w in _fold(re.sub(r"\(.*?\)", "", x or "")).split() if len(w) >= 4][-1:]
+    h, a = ln(leg.get("home")), ln(leg.get("away"))
+    if not h or not a:
+        return None
+    for d, n1, n2, w, meth, final in fights:
+        f1, f2 = _fold(n1).split(), _fold(n2).split()
+        if h[0] in f1 and a[0] in f2:
+            sw = False
+        elif h[0] in f2 and a[0] in f1:
+            sw = True
+        else:
+            continue
+        if d and not (c.date() - timedelta(days=2) <= d <= c.date() + timedelta(days=45)):
+            continue                                      # kita tų pačių kovotojų kova
+        t = datetime.combine(d, datetime.min.time()) + timedelta(hours=19) if d else k
+        e = {"_t1": n1, "_t2": n2, "_sport": "mma", "_league": f"UTMA (77.lt){', ' + meth if meth else ''}",
+             "_start": t, "_swapped": sw}
+        if not final or not w:
+            e["Eps"] = "NS"
+            return e
+        e.update({"Tr1": 1 if w == "h" else 0, "Tr2": 1 if w == "a" else 0, "Eps": "FT", "Ewt": 1 if w == "h" else 2})
+        return e
+    return None

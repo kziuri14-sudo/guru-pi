@@ -290,6 +290,33 @@ def s365_cards_corners_and_quarters():
 
 
 @test
+def utma_77lt_parser():
+    import io
+    page = ('<div class="l77-game is-final l77-game--combat"><div class="l77-game-when"><b>Št vas. 21</b></div>'
+            '<div class="l77-gt l77-gt--home is-win"><span class="l77-gt-name">Nikola Cvetkovič</span></div>'
+            '<span class="l77-method l77-method--ko"><b>TKO</b></span><div class="l77-gt l77-gt--away">'
+            '<span class="l77-gt-name">Nauris Lukošiūnas</span></div></div>')
+
+    class F(io.BytesIO):
+        def __enter__(s):
+            return s
+
+        def __exit__(s, *a):
+            pass
+    old = urllib.request.urlopen
+    urllib.request.urlopen = lambda req, timeout=0: F(page.encode())
+    P.UTMA_STATE["off_until"] = 0
+    try:
+        leg = {"sport": "mma", "home": "Nauris Lukošiūnas", "away": "Nikola Cvetkovič", "side": "Win",
+               "team": "Nikola Cvetkovič", "pick": "Cvetkovič", "kickoff": f"{datetime.now().year}-02-21T19:00",
+               "created": f"{datetime.now().year}-02-20T10:00"}
+        e = P.utma_event(leg)
+        assert e and e["_swapped"] and st(R.evaluate(leg, e)) == "won", e
+    finally:
+        urllib.request.urlopen = old
+
+
+@test
 def bookmaker_market_mapping():
     m = {"h": "Scotland", "a": "North Macedonia"}
     w = lambda **k: P._wanted(dict({"home": "Scotland", "away": "North Macedonia", "sport": "soccer"}, **k), m, False)
