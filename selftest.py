@@ -118,6 +118,9 @@ def team_subject_is_not_player():
     leg = {"sport": "basketball", "home": "PAO", "away": "Barca", "subject": "PAO vs Barca",
            "pick": "PAO vs Barca total under 83.5", "side": "Under", "line": 83.5}
     assert R.team_subject(leg) and not P.is_prop(leg)
+    leg2 = dict(leg, subject="PAO vs Barca total")
+    assert R.team_subject(leg2) and not P.is_prop(leg2)
+    assert not R.team_subject({"home": "Phoenix Suns", "away": "Lakers", "subject": "Devin Booker"})
 
 
 # ---------------------------------------------------------------- laikas: LIVE tinka, po rungtynių – ne

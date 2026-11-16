@@ -375,6 +375,10 @@ NOTLOSE_RE = re.compile(r"nepralaim|not lose|won'?t lose|wont lose|nepralosi|dra
 
 def team_subject(b):
     sj = str(b.get("subject") or "")
+    toks = _fold(sj).split()
+    if sj and any(_fold(b.get(k) or "") in toks or (_fold(b.get(k) or "") and _fold(b.get(k) or "") == _fold(sj))
+                  for k in ("home", "away")):
+        return True                                     # „PAO vs Barca total“ – trumpi pavadinimai
     return bool(sj) and (same(sj, b.get("home")) or same(sj, b.get("away")) or
                          bool(re.search(r"\bvs?\b|–|-", sj)) and (same(b.get("home"), sj) or same(b.get("away"), sj)))
 

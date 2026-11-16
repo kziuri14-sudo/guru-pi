@@ -367,6 +367,8 @@ def _apply_players(leg, t, players, keys, line, side, src, labels):
     hits = [(p, _name_hits(text, p["first"], p["last"])) for p in players]
     hits = [x for x in hits if x[1]]
     if not hits:
+        if not leg.get("subject") and not re.search(r"[A-Z][a-z]+ [A-Z][a-z]+", str(leg.get("pick") or "")):
+            return None, None, "nenurodytas žaidėjas – nežinoma rinka"
         return None, None, "žaidėjas nerastas protokole"
     best = max(h for _, h in hits)
     chosen, seen = [], set()
