@@ -292,6 +292,21 @@ def _player_bet(leg):
     line, side = _line(leg, leg.get("pick") or "")
     sport = _fold(leg.get("sport"))
     lg = _fold(leg.get("league"))
+    hk = _nhl_keys(leg.get("pick") or "")
+    if _sp(leg) == "hockey":
+        if not hk:
+            return None, None, "neaišku, kokia NHL statistika"
+        if hk == ["goals"] and line is None:
+            line, side = 0.5, "Over"                     # „anytime goalscorer“
+        if line is None or side is None:
+            return None, None, "nėra linijos"
+        g = _nhl_game(leg)
+        if not g:
+            return None, None, "NHL rungtynės nerastos"
+        if g[1].get("gameState") not in ("OFF", "FINAL"):
+            return None, None, "rungtynės dar nesibaigė"
+        players = _players_nhl(_get(f"{NHL}/gamecenter/{g[1]['id']}/boxscore", ttl=86400))
+        return _apply_players(leg, t, players, hk, line, side, "NHL.com", NHL_LAB)
     nk = _nfl_keys(leg.get("pick") or "")
     if nk or "american" in sport or re.search(r"\bnfl\b|ncaaf|college football", lg):
         if not nk:
@@ -1521,4 +1536,116 @@ def _players_lkl(bx):
                 v = {}
             out.append({"first": " ".join(parts[:-1]), "last": parts[-1] if parts else "",
                         "played": str(val("time") or "00:00") not in ("00:00", "0:00", ""), "v": v})
+    return out
+
+
+# ---------------------------------------------------------------- NHL – oficialus api-web.nhle.com (rezultatai, periodai, žaidėjai)
+NHL = "https://api-web.nhle.com/v1"
+NHL_KEYS = (("sog", r"shots? on goal|\bsog\b|metim\w*|smugi\w*|shots"),
+            ("saves", r"\bsaves?\b|atremt\w*|atmust\w*"),
+            ("points", r"\bpoints?\b|task\w*|\bpts\b"),
+            ("assists", r"assists?|rezultatyv\w*|perdavim\w*"),
+            ("goals", r"goal ?scorer|anytime|to score|\bgoals?\b|ivart\w*|imus"),
+            ("hits", r"\bhits\b|smugi\w* jega|susidurim\w*"),
+            ("blocked", r"blocked shots|blok\w*"))
+NHL_LAB = {"sog": "metimai į vartus", "saves": "atremti metimai", "points": "taškai", "assists": "rez. perdavimai",
+           "goals": "įvarčiai", "hits": "jėgos veiksmai", "blocked": "blokuoti metimai"}
+
+
+def _nhl_keys(text):
+    t = _fold(text)
+    for k, rx in NHL_KEYS:
+        if re.search(rx, t):
+            return [k]
+    return []
+
+
+def _nhl_team_ok(sig, t):
+    """Signalo pavadinimas („Philadelphia Flyers“, „Flyers“, „PHI“) ↔ NHL komanda."""
+    s = " " + _fold(sig) + " "
+    cn = _fold((t.get("name") or t.get("commonName") or {}).get("default"))
+    pl = _fold((t.get("placeName") or {}).get("default"))
+    ab = _fold(t.get("abbrev"))
+    return bool(cn and f" {cn} " in s) or bool(ab and s.strip() == ab) or bool(pl and cn and f" {pl} " in s and cn in s)
+
+
+def _nhl_game(leg):
+    k, c = _when(leg)
+    best = None
+    for d in (k.date() - timedelta(days=1), k.date(), k.date() + timedelta(days=1)):
+        old = d < (datetime.now() - timedelta(days=2)).date()
+        try:
+            data = _get(f"{NHL}/score/{d:%Y-%m-%d}", ttl=86400 if old else 600)
+        except Exception:
+            continue
+        for g in data.get("games") or []:
+            h, a = g.get("homeTeam") or {}, g.get("awayTeam") or {}
+            sh, sa = leg.get("home") or "", leg.get("away") or ""
+            if _nhl_team_ok(sh, h) and (not sa or _nhl_team_ok(sa, a)):
+                sw = False
+            elif _nhl_team_ok(sh, a) and (not sa or _nhl_team_ok(sa, h)):
+                sw = True
+            else:
+                continue
+            try:
+                t = datetime.fromisoformat(str(g["startTimeUTC"]).replace("Z", "+00:00")).astimezone().replace(tzinfo=None)
+            except Exception:
+                continue
+            if not (c - timedelta(hours=30) <= t <= c + timedelta(hours=36)):
+                continue
+            gap = abs((t - k).total_seconds())
+            if best is None or gap < best[0]:
+                best = (gap, g, sw, t)
+    return best
+
+
+def nhl_event(leg):
+    """NHL rezultatas LiveScore formatu (su periodais) – nepriklausomas šaltinis ledo rituliui."""
+    if (_sp(leg) or "") != "hockey" and not re.search(r"\bnhl\b", _fold(leg.get("league"))):
+        return None
+    b = _nhl_game(leg)
+    if not b:
+        return None
+    _, g, sw, t = b
+    h, a = g["homeTeam"], g["awayTeam"]
+    nm = lambda x: " ".join(filter(None, [_fold((x.get("placeName") or {}).get("default")).title(),
+                                           (x.get("name") or x.get("commonName") or {}).get("default")]))
+    e = {"_t1": nm(h), "_t2": nm(a), "_sport": "hockey", "_league": "NHL (nhl.com)", "_start": t, "_swapped": sw}
+    if g.get("gameState") not in ("OFF", "FINAL"):
+        e["Eps"] = "NS" if g.get("gameState") in ("FUT", "PRE") else "LIVE"
+        return e
+    e["Tr1"], e["Tr2"] = h.get("score"), a.get("score")
+    per = {}
+    for gl in g.get("goals") or []:
+        pdsc = gl.get("periodDescriptor") or {}
+        if pdsc.get("periodType") == "SO":
+            continue
+        n = int(gl.get("period") or pdsc.get("number") or 0)
+        side = "h" if _fold(gl.get("teamAbbrev")) == _fold(h.get("abbrev")) else "a"
+        per.setdefault(n, {"h": 0, "a": 0})[side] += 1
+    for n in (1, 2, 3):
+        e[f"Tr1Pe{n}"], e[f"Tr2Pe{n}"] = per.get(n, {}).get("h", 0), per.get(n, {}).get("a", 0)
+    lpt = ((g.get("gameOutcome") or {}).get("lastPeriodType") or "REG")
+    reg_h = sum(per.get(n, {}).get("h", 0) for n in (1, 2, 3))
+    reg_a = sum(per.get(n, {}).get("a", 0) for n in (1, 2, 3))
+    e["Tr1OR"], e["Tr2OR"] = reg_h, reg_a
+    e["Eps"] = {"OT": "AET", "SO": "AP"}.get(lpt, "FT")
+    e["Ewt"] = 1 if (h.get("score") or 0) > (a.get("score") or 0) else 2
+    return e
+
+
+def _players_nhl(bx):
+    out = []
+    for side in ("homeTeam", "awayTeam"):
+        grp = (bx.get("playerByGameStats") or {}).get(side) or {}
+        for pos in ("forwards", "defense", "goalies"):
+            for p in grp.get(pos) or []:
+                nm = str((p.get("name") or {}).get("default") or "")
+                parts = nm.replace(".", " ").split()
+                toi = str(p.get("toi") or "00:00")
+                v = {"sog": p.get("sog"), "points": p.get("points"), "goals": p.get("goals"), "assists": p.get("assists"),
+                     "hits": p.get("hits"), "blocked": p.get("blockedShots"), "saves": p.get("saves")}
+                v = {k: float(x) for k, x in v.items() if isinstance(x, (int, float))}
+                out.append({"first": " ".join(parts[:-1]), "last": parts[-1] if parts else "",
+                            "played": toi not in ("00:00", "0:00"), "v": v})
     return out

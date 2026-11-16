@@ -12,6 +12,7 @@ import os
 import secrets
 import shutil
 import subprocess
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import logging
@@ -975,7 +976,8 @@ import hashlib
 UPDATE_URL = CFG.get("update_url") or "https://raw.githubusercontent.com/kziuri14-sudo/guru-pi/main/pi_guru.py"
 
 
-UPDATE_FILES = ("pi_guru.py", "pi_audit.py", "results.py", "props.py", "dash.html")
+UPDATE_FILES = ("pi_guru.py", "pi_audit.py", "results.py", "props.py", "dash.html", "selftest.py")
+GH_REJECTED = set()                                # versijos, kurių testai nepraėjo – nebandom iš naujo
 
 
 def _fetch_update(name="pi_guru.py"):
@@ -988,6 +990,30 @@ def _fetch_update(name="pi_guru.py"):
         return None
 
 
+def _selftest(new):
+    """Nauja versija išbandoma atskirame aplanke (selftest.py) prieš ją įdiegiant. (ar_praėjo, išvestis)"""
+    import tempfile
+    tmp = Path(tempfile.mkdtemp(prefix="guru_test_"))
+    try:
+        for name in UPDATE_FILES:
+            data = new.get(name)
+            if data is None:
+                try:
+                    data = (BASE / name).read_bytes()
+                except Exception:
+                    continue
+            (tmp / name).write_bytes(data)
+        if not (tmp / "selftest.py").exists():
+            return True, "testų nėra"
+        r = subprocess.run([sys.executable, "selftest.py"], cwd=tmp, capture_output=True, text=True, timeout=300)
+        out = (r.stdout or "") + (r.stderr or "")
+        return r.returncode == 0, out
+    except Exception as e:
+        return False, f"testų paleisti nepavyko: {e}"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 GH_NOW = asyncio.Event()
 
 
@@ -996,7 +1022,7 @@ async def github_updater():
     await asyncio.sleep(60)
     while True:
         GH_NOW.clear()
-        changed = []
+        changed, new = [], {}
         for name in UPDATE_FILES:
             data = await asyncio.to_thread(_fetch_update, name)
             if not data:
@@ -1017,8 +1043,25 @@ async def github_updater():
             except Exception as e:
                 log.error("❗ GitHub %s atmestas: %s", name, e)
                 continue
-            _write(name, data)
-            changed.append(name)
+            new[name] = data
+        if new:
+            sig = hashlib.sha256(b"".join(new[n] for n in sorted(new))).hexdigest()
+            if sig in GH_REJECTED:
+                new = {}                                   # jau atmesta – laukiam naujos versijos
+            ok, out = await asyncio.to_thread(_selftest, new) if new else (True, "")
+            if not ok:
+                GH_REJECTED.add(sig)
+                log.error("❗ GitHub atnaujinimas atmestas – testai nepraėjo:\n%s", out[-1500:])
+                try:
+                    await asyncio.to_thread(ntfy, "⚠ Atnaujinimas sustabdytas",
+                                            "Naujos versijos testai nepraėjo – palikta veikianti versija.\n" + out[-300:],
+                                            None, None, 3)
+                except Exception:
+                    pass
+                new = {}
+            for name, data in new.items():
+                _write(name, data)
+                changed.append(name)
         if changed:
             log.info("🔄 Atnaujinta iš GitHub: %s – persikraunu", ", ".join(changed))
             try:

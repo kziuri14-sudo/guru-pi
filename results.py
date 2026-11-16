@@ -446,7 +446,13 @@ def evaluate(b, e):
     if re.search(r"\bdnb\b|draw no bet|lygiosios\W{0,3}grazin|be lygiuju|lygiuju atveju grazin", pick) and \
             side not in ("Over", "Under", "BTTS", "DC"):
         side, line = "Spread", 0.0                         # DNB = fora 0: lygiosios – statymas grąžinamas
-    if re.search(r"win\w* to nil|laimes? sausai|laimes? be praleist|pergale sausai", pick) and mine_home is not None:
+    nil = re.search(r"win\w* to nil|laimes? sausai|laimes? be praleist|pergale sausai", pick)
+    if nil and mine_home is None and b.get("home"):        # komanda nenurodyta atskirai – ieškom statymo tekste
+        if same(b.get("home"), pick) and not same(b.get("away") or "", pick):
+            mine_home = True
+        elif b.get("away") and same(b["away"], pick) and not same(b["home"], pick):
+            mine_home = False
+    if nil and mine_home is not None:
         mine, oth = (hs, as_) if mine_home else (as_, hs)
         hit = mine > oth and oth == 0
         if re.search(r"(\bno\b|\bne\b)\s*$", pick):
@@ -585,7 +591,7 @@ def settle(b):
     return res
 
 
-SOURCES = [("ESPN/EuroLeague", "alt_event"), ("ESPN MMA", "mma_event"), ("API-Sports", "apisports_event"), ("SportScore", "sportscore_event"),
+SOURCES = [("ESPN/EuroLeague", "alt_event"), ("NHL.com", "nhl_event"), ("ESPN MMA", "mma_event"), ("API-Sports", "apisports_event"), ("SportScore", "sportscore_event"),
            ("FotMob", "fotmob_event"),
            ("365Scores", "s365_event"), ("SofaScore", "sofa_event")]
 

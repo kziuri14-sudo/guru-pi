@@ -1459,6 +1459,7 @@ Jei tekste atsakymo nėra – {{"found": false}}.
             recent.append({"t": b["t"], "c": b["c"], "chat": chats.get(b["c"], b["c"]), "who": b.get("un"),
                            "status": b["status"], "odds": b.get("odds"), "photo": b.get("photo", False),
                            "mkt": b.get("mkt"), "gm": b.get("grp_mark"), "bg": b.get("by_group", False),
+                           "vf": b.get("vf"), "dt": [l.get("doubt") for l in b["legs"] if l.get("doubt")],
                            "legs": [{"m": f"{l.get('home')} – {l.get('away') or ''}".strip(" –"), "pick": l.get("pick"),
                                      "st": l.get("status"),
                                      "d": (l.get("detail") or (("⏳ " + l["note"]) if l.get("note") else ""))[:110],
@@ -1475,6 +1476,15 @@ Jei tekste atsakymo nėra – {{"found": false}}.
                 "web_used": self.d.get("web_used", 0),
                 "search": {"n": self.d.get("sweb_used", 0), "ok": self.d.get("sweb_ok", 0),
                            "last": (props.SEARCH_STATE.get("last") if props and hasattr(props, "SEARCH_STATE") else "")},
+                "quality": {"verified": sum(1 for b in bets if b.get("vf") is True),
+                            "doubts": sum(1 for b in bets if b.get("vf") is False),
+                            "grp_agree": sum(1 for b in bets if b.get("grp_mark") and not b.get("by_group")
+                                             and b["grp_mark"]["st"] == b["status"]),
+                            "grp_disagree": sum(1 for b in bets if b.get("grp_mark") and not b.get("by_group")
+                                                and b["status"] in ("won", "lost", "push")
+                                                and b["grp_mark"]["st"] != b["status"]),
+                            "by_group": sum(1 for b in bets if b.get("by_group")),
+                            "log": (self.d.get("doubts") or [])[-15:][::-1]},
                 "signal": [c for c, nm in self.d["chats"].items()
                            if any(_n(x) and _n(x) in _n(nm) for x in (self.cfg.get("groups") or []))],
                 "sofascore": (props.SOFA_STATE.get("last") if props else ""),
@@ -1489,6 +1499,63 @@ Jei tekste atsakymo nėra – {{"found": false}}.
                 "bets": len(bets), "days": self.days, "paused": time.time() < self.d.get("pause_until", 0)}
 
     # ------------------------------------------------------------------ amžinas ciklas
+    VERIFY_PROMPT = """Tu – griežtas lažybų statymų tikrintojas. Sistema jau nusprendė statymo baigtį. Patikrink, ar sprendimas
+LOGIŠKAI atitinka statymą ir pateiktą pagrindimą (rezultatą / statistiką). Tikrink:
+- ar vertintas teisingas periodas (1-as kėlinys / periodas / kėlinys ar visos rungtynės),
+- ar teisinga komanda / žaidėjas, kryptis (daugiau / mažiau), linija ir fora,
+- ar statistika atitinka rinką (įvarčiai, taškai, kampiniai, kortelės, žaidėjo taškai ir t. t.),
+- ar „įskaitant pratęsimą“ / „be pratęsimo“ taisyklė pritaikyta teisingai.
+Nespręsk iš naujo, jei pagrindime trūksta duomenų – tada ok: true. Klaida = tik kai sprendimas aiškiai prieštarauja pagrindimui.
+Statymai:
+{items}
+Atsakyk TIK JSON: {{"res": [{{"i": numeris, "ok": true/false, "why": "trumpai lietuviškai, jei ok=false"}}]}}"""
+
+    def verify_some(self, limit=8):
+        """AI kontrolierius: antra nuomonė apie jau nuspręstus statymus. Abejotini pažymimi ⚠ ir perskaičiuojami."""
+        if not self.cfg.get("groq_key"):
+            return
+        today = datetime.now().strftime("%Y-%m-%d")
+        if self.d.get("vf_day") != today:
+            self.d["vf_day"], self.d["vf_used"] = today, 0
+        if self.d["vf_used"] >= int(self.cfg.get("audit_verify_per_day", 60)):
+            return
+        cut = (datetime.now() - timedelta(days=4)).strftime("%Y-%m-%d")
+        todo = []
+        for b in reversed(self.d["bets"]):
+            if b["status"] in ("won", "lost", "push") and "vf" not in b and not b.get("by_group") \
+                    and str(b["t"])[:10] >= cut:
+                for l in b["legs"]:
+                    if l.get("status") in ("won", "lost", "push") and "vf" not in l:
+                        todo.append((b, l))
+            if len(todo) >= limit:
+                break
+        if not todo:
+            return
+        items = "\n".join(
+            f"{i}. Statymas: „{l.get('pick')}“ | rungtynės: {l.get('home')} – {l.get('away') or '?'} | sportas: "
+            f"{l.get('sport') or '?'} | rinka: {l.get('side') or '?'} {l.get('line') if l.get('line') is not None else ''} | "
+            f"komanda/žaidėjas: {l.get('team') or l.get('subject') or '-'} | SPRENDIMAS: {l.get('status')} | "
+            f"pagrindimas: {(l.get('detail') or '')[:220]}" for i, (b, l) in enumerate(todo))
+        r = groq_json(self.cfg, self.VERIFY_PROMPT.format(items=items), self.log)
+        if not isinstance(r, dict):
+            return
+        self.d["vf_used"] += 1
+        got = {int(x.get("i", -1)): x for x in r.get("res") or [] if isinstance(x, dict)}
+        for i, (b, l) in enumerate(todo):
+            x = got.get(i)
+            if x is None:
+                continue
+            l["vf"] = bool(x.get("ok", True))
+            if not l["vf"]:
+                l["doubt"] = str(x.get("why") or "")[:200]
+                self.d.setdefault("doubts", []).append({"t": datetime.now().isoformat(timespec="minutes"),
+                                                        "c": b["c"], "mid": b["mid"], "pick": l.get("pick"),
+                                                        "was": l.get("status"), "why": l["doubt"]})
+                self.d["doubts"] = self.d["doubts"][-200:]
+        for b, _ in todo:
+            if all("vf" in l for l in b["legs"] if l.get("status") in ("won", "lost", "push")):
+                b["vf"] = all(l.get("vf", True) for l in b["legs"])
+
     def odds_some(self, limit=6):
         """Prototipas „ar galima pastatyti“: kiekvienam futbolo statymui – bukmekerių koeficientas prieš rungtynes."""
         if not props or not hasattr(props, "market_odds") or not self.cfg.get("apisports_key"):
@@ -1552,6 +1619,7 @@ Jei tekste atsakymo nėra – {{"found": false}}.
             try:
                 await asyncio.to_thread(self.settle_some)
                 await asyncio.to_thread(self.odds_some)
+                await asyncio.to_thread(self.verify_some)
                 self.save()
             except Exception as e:
                 self.log.info("audit rezultatai: %s", e)
