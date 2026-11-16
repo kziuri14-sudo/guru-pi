@@ -397,9 +397,70 @@ def alerts_only_for_followed():
 
 
 @test
+def consensus_signal():
+    import pi_audit as A
+    from pathlib import Path
+    d = tempfile.mkdtemp()
+    a = A.Auditor(None, {}, logging.getLogger("t"), Path(d), Path(d))
+    a.d["chats"] = {"c1": "A", "c2": "B", "c3": "C"}
+    a.d["kind"] = {"c1": "channel", "c2": "channel", "c3": "group"}
+    sent = []
+    a.notify = lambda title, msg, legs: sent.append(title)
+    a.settings = {"consensus_min": 3}
+    now = datetime.now()
+    kick = (now + timedelta(hours=4)).strftime("%Y-%m-%dT%H:%M")
+    mk = lambda c, mid, home, away, pick, side, team=None, line=None, u=None: {
+        "c": c, "mid": mid, "u": u, "t": now.isoformat(timespec="minutes"), "status": "pending",
+        "legs": [{"home": home, "away": away, "pick": pick, "side": side, "team": team, "line": line,
+                  "sport": "soccer", "kickoff": kick, "status": "pending"}]}
+    b1 = mk("c1", 1, "Arsenal", "Chelsea", "Over 2.5", "Over", line=2.5)
+    b2 = mk("c2", 2, "Chelsea", "Arsenal FC", "Daugiau 2.5", "Over", line=2.5)
+    b3 = mk("c3", 3, "Arsenal", "Chelsea", "Over 2.5 goals", "Over", line=2.5, u="9")
+    b4 = mk("c3", 4, "Arsenal", "Chelsea", "Over 2.5", "Over", line=2.5, u="9")       # tas pats žmogus – nesiskaito
+    a.d["bets"] = [b1, b2]
+    a._consensus([b2])
+    assert not sent
+    a.d["bets"] += [b3, b4]
+    a._consensus([b3, b4])
+    assert len(sent) == 1 and "3 šaltiniai" in sent[0], sent
+    a._consensus([b4])
+    assert len(sent) == 1                                     # nekartojam
+    k1 = A.Auditor._ckey(dict(b1["legs"][0], side="Win", team="Arsenal", pick="Arsenal"))
+    k2 = A.Auditor._ckey(dict(b2["legs"][0], side="Win", team="Arsenal FC", pick="Arsenal FC laimės"))
+    assert k1 == k2, (k1, k2)
+
+
+@test
+def clv_and_categories():
+    import pi_audit as A
+    from pathlib import Path
+    d = tempfile.mkdtemp()
+    a = A.Auditor(None, {"apisports_key": "x"}, logging.getLogger("t"), Path(d), Path(d))
+    past = (datetime.now() - timedelta(hours=3)).strftime("%Y-%m-%dT%H:%M")
+    b = {"c": "c1", "mid": 1, "t": (datetime.now() - timedelta(hours=8)).isoformat(timespec="minutes"),
+         "status": "won", "odds": 2.0, "mkt": {"odds": 1.95, "pre": True},
+         "legs": [{"home": "A", "away": "B", "pick": "Over 2.5", "side": "Over", "line": 2.5, "sport": "soccer",
+                   "kickoff": past, "status": "won"}]}
+    a.d["bets"] = [b]
+    old = P.market_odds
+    P.market_odds = lambda leg, close=False: {"odds": 1.8} if close else {"odds": 1.95}
+    try:
+        a.clv_some()
+    finally:
+        P.market_odds = old
+    assert abs(b["clv"] - (2.0 / 1.8 - 1)) < 1e-3, b.get("clv")
+    s = A._stats([b])
+    assert s["clv"] == round((2.0 / 1.8 - 1) * 100, 1) and s["n_clv"] == 1
+    assert A._cat(b) == "Futbolas · totalai"
+    assert A._cat(dict(b, legs=[dict(b["legs"][0], sport="basketball", subject="Devin Booker",
+                                     pick="Devin Booker over 25.5 points")])) == "Krepšinis · žaidėjų statistika"
+    assert A._cat(dict(b, legs=b["legs"] * 2)) == "Kombinuoti kuponai"
+
+
+@test
 def dashboard_has_required_parts():
     h = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "dash.html"), encoding="utf-8").read()
-    for x in ("fetch('/api'", "id=\"dayTable\"", "id=\"sigCard\"", "id=\"qLog\"", "toggleFollow", "id=\"n_guru\"", "Powered by SportScore", "function renderBets",
+    for x in ("fetch('/api'", "id=\"dayTable\"", "id=\"sigCard\"", "id=\"qLog\"", "toggleFollow", "id=\"n_guru\"", "function openMember", "id=\"n_cons\"", "Powered by SportScore", "function renderBets",
               "post('/settings'"):
         assert x in h, x
 

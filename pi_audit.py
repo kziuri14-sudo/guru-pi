@@ -140,6 +140,10 @@ def _stats(bets):
          "best_streak": 0, "worst_streak": 0, "max_dd": 0.0}
     cur = peak = 0.0
     sw = sl = 0
+    clv = [b["clv"] for b in bets if isinstance(b.get("clv"), (int, float))]
+    r["n_clv"] = len(clv)
+    r["clv"] = round(sum(clv) / len(clv) * 100, 1) if clv else None   # vid. pranašumas prieš uždarymo koef., %
+    r["clv_pos"] = round(sum(1 for x in clv if x > 0) / len(clv) * 100) if clv else None
     for b in sorted(bets, key=lambda x: x["t"]):
         st = b["status"]
         if st == "pending":
@@ -181,6 +185,56 @@ def _stats(bets):
     r["proven"] = bool(r["reliable"] and r["roi_low"] is not None and r["roi_low"] > 0)
     del r["odds_sum"]
     return r
+
+
+SPORT_LT = {"soccer": "Futbolas", "basketball": "Krepšinis", "hockey": "Ledo ritulys", "tennis": "Tenisas",
+            "mma": "MMA", "american_football": "Amer. futbolas", "baseball": "Beisbolas", "volleyball": "Tinklinis",
+            "handball": "Rankinis", "esports": "E-sportas"}
+
+
+def _cat(b):
+    """Statymo kategorija: „Krepšinis · totalai“, „Futbolas · pergalė“, „Kombinuoti“ ir pan."""
+    legs = b.get("legs") or []
+    if len(legs) != 1:
+        return "Kombinuoti kuponai"
+    l = legs[0]
+    sp = str(l.get("sport") or "").lower().replace(" ", "_")
+    sp = {"ice_hockey": "hockey", "football": "soccer", "nfl": "american_football"}.get(sp, sp)
+    sport = SPORT_LT.get(sp, "Kita")
+    t = re.sub(r"\s+", " ", str(l.get("pick") or "").lower())
+    side = str(l.get("side") or "").lower()
+    try:
+        if props and props.is_prop(l):
+            mk = "kampiniai / kortelės" if re.search(r"corner|kampin|card|kortel|booking", t) else "žaidėjų statistika"
+            return f"{sport} · {mk}"
+    except Exception:
+        pass
+    if results and results.BTTS_RE.search(results._fold(t)):
+        mk = "abi įmuš"
+    elif re.search(r"nepralaim|not lose|double chance|dviguba|\b1x\b|\bx2\b|\b12\b", t) or side == "dc":
+        mk = "dviguba baigtis"
+    elif side in ("over", "under") or re.search(r"\b(over|under|daugiau|mažiau|maziau)\b", t):
+        mk = "totalai"
+    elif side == "spread" or re.search(r"[+-]\d+(\.\d)?\b|fora|handicap", t):
+        mk = "fora"
+    elif side == "win":
+        mk = "pergalė"
+    else:
+        mk = "kita"
+    return f"{sport} · {mk}"
+
+
+def _by_cat(bets, min_n=2):
+    out = {}
+    for b in bets:
+        out.setdefault(_cat(b), []).append(b)
+    res = []
+    for k, lst in out.items():
+        st = _stats(lst)
+        if st["n"] >= min_n:
+            res.append({"k": k, "n": st["n"], "w": st["w"], "l": st["l"], "units": st["units"], "hit": st["hit"],
+                        "roi": st["roi"], "clv": st["clv"], "n_clv": st["n_clv"], "pend": st["pend"]})
+    return sorted(res, key=lambda x: -x["units"])
 
 
 _GROQ_M = {"t": 0, "ids": []}
@@ -1216,12 +1270,15 @@ Jei tekste atsakymo nėra – {{"found": false}}.
             st = getattr(self, "settings", None) or {}
             follow = set(st.get("follow") or [])
             m = next((x for x in (g or {}).get("members") or [] if x["u"] == str(b.get("u"))), None) if b.get("u") else None
-            fm, fg = f"m:{b['c']}:{b.get('u')}" in follow, f"g:{b['c']}" in follow
+            cat = _cat(b)
+            fm = f"m:{b['c']}:{b.get('u')}" in follow or f"m:{b['c']}:{b.get('u')}@{cat}" in follow
+            fg = f"g:{b['c']}" in follow or f"g:{b['c']}@{cat}" in follow
             why = None
             stat = lambda x: f"{x['hit'] if x.get('hit') is not None else '–'}% pataikymas, pelnas {x.get('units', 0):+.1f} vnt. " \
                              f"({x.get('n', 0)} patikr. st.)"
             if fm and m:
-                why = f"👤 sekamas {m['name']}: {stat(m)}"
+                c = next((x for x in m.get("cats") or [] if x["k"] == cat), None)
+                why = f"👤 sekamas {m['name']}: {stat(m)}" + (f"\n{cat}: {c['w']}–{c['l']}, {c['units']:+.1f} vnt." if c else "")
             elif fm:
                 why = "👤 sekamas žmogus"
             elif fg:
@@ -1241,6 +1298,107 @@ Jei tekste atsakymo nėra – {{"found": false}}.
                 f"\n✔ {why}"
             self.notify(title, msg, legs)
             self.d["alerts"] = self.d.get("alerts", 0) + 1
+
+    @staticmethod
+    def _ckey(l):
+        """Rinkos raktas palyginimui tarp grupių: (komandos, rinka, pusė, linija) arba None."""
+        f = results._fold
+        h, a = f(l.get("home")), f(l.get("away"))
+        tk = lambda x: next((w for w in x.split() if len(w) >= 4), x.split()[0] if x.split() else "")
+        if not h or not a:
+            return None
+        th, ta = tk(h), tk(a)
+        t = f(l.get("pick"))
+        side = str(l.get("side") or "").lower()
+        who = f(l.get("team") or l.get("pick"))
+        pside = th if th and th in who and ta not in who else ta if ta and ta in who and th not in who else \
+            "x" if re.search(r"\b(draw|lygios|x)\b", who) else "?"           # komanda (pavadinimo žodis), ne pusė
+        line = l.get("line")
+        if results.BTTS_RE.search(t):
+            mk = ("btts", "no" if re.search(r"\b(no|ne)\b", t) else "yes", None)
+        elif side in ("over", "under"):
+            mk = ("tot", side, line)
+        elif side == "dc" or re.search(r"nepralaim|not lose|double chance", t):
+            mk = ("dc", pside, None)
+        elif side == "spread" and line is not None:
+            mk = ("hcp", pside, line)
+        elif side == "win" and pside != "?":
+            mk = ("win", pside, None)
+        else:
+            return None
+        if props and props.is_prop(l):
+            return None
+        per = results._period_text(l) if hasattr(results, "_period_text") else "ft"
+        return (tuple(sorted((th, ta))), per) + mk
+
+    def _cons_map(self, hours=10, future=True):
+        now = datetime.now()
+        cut = (now - timedelta(hours=hours)).isoformat(timespec="minutes")
+        mp = {}
+        for b in self.d["bets"]:
+            if str(b["t"])[:16] < cut[:16] and future:
+                continue
+            if any("ne prognozė" in (l.get("detail") or "") for l in b["legs"]):
+                continue
+            src = f"{b['c']}:{b['u']}" if b.get("u") else str(b["c"])
+            for l in b["legs"]:
+                k = self._ckey(l)
+                if not k:
+                    continue
+                if future and self._kick(l, b) < now:
+                    continue
+                e = mp.setdefault(k, {"src": {}, "leg": l, "b": b})
+                e["src"].setdefault(src, b)
+        return mp
+
+    def _cons_stats(self):
+        """Kaip sekasi statymams, kuriuos paskelbė ≥2 / ≥3 skirtingi šaltiniai (po vieną atstovą kiekvienai rinkai)."""
+        out = {}
+        try:
+            mp = self._cons_map(hours=24 * 365, future=False)
+        except Exception:
+            return out
+        for n in (2, 3):
+            reps = []
+            for e in mp.values():
+                if len(e["src"]) >= n:
+                    l = e["leg"]
+                    st = l.get("status")
+                    if st in ("won", "lost", "push", "pending"):
+                        reps.append({"t": e["b"]["t"], "status": st, "odds": l.get("odds") or
+                                     (e["b"].get("odds") if len(e["b"]["legs"]) == 1 else None), "legs": [l]})
+            out[str(n)] = _stats(reps)
+        return out
+
+    def _consensus(self, new):
+        """Tą patį statymą paskelbė keli skirtingi šaltiniai → vienas „🔥 Sutarimas“ pranešimas."""
+        st = getattr(self, "settings", None) or {}
+        cmin = int(st.get("consensus_min", 3) or 0)
+        if not new or not self.notify or cmin < 2:
+            return
+        mp = self._cons_map()
+        sent = self.d.setdefault("cons_sent", {})
+        s = self.summary()
+        gm = {g["cid"]: g for g in s.get("groups") or []}
+        for b in new:
+            for l in b["legs"]:
+                k = self._ckey(l)
+                e = mp.get(k) if k else None
+                if not e or len(e["src"]) < cmin or sent.get(repr(k), 0) >= len(e["src"]):
+                    continue
+                sent[repr(k)] = len(e["src"])
+                lines = []
+                for src, bb in list(e["src"].items())[:6]:
+                    g = gm.get(bb["c"]) or {}
+                    m = next((x for x in g.get("members") or [] if x["u"] == str(bb.get("u"))), None) if bb.get("u") else None
+                    x = m or g
+                    nm = (bb.get("un") + " · " if bb.get("un") else "") + str(self.d["chats"].get(bb["c"], bb["c"]))[:28]
+                    lines.append(f"• {nm}" + (f" – {x['hit']}% ({x['n']})" if x and x.get("hit") is not None else ""))
+                msg = f"{l.get('home')} – {l.get('away')} | {l.get('pick')}\n" + "\n".join(lines)
+                self.notify(f"🔥 Sutarimas: {len(e['src'])} šaltiniai", msg, [l])
+        if len(sent) > 500:
+            for k in list(sent)[:-300]:
+                sent.pop(k, None)
 
     def _fail(self, items):
         """Nepavyko – bandysim dar (po vieną žinutę); išmetam tik po 5 bandymų."""
@@ -1292,7 +1450,9 @@ Jei tekste atsakymo nėra – {{"found": false}}.
         self.d["done_msgs"] += len(items)
         self._done += [(r[0], r[1]) for r in items]
         try:
-            self._alert([b for b in self.d["bets"][-40:] if (b["c"], b["mid"]) in {(r[0], r[1]) for r in items}])
+            fresh = [b for b in self.d["bets"][-40:] if (b["c"], b["mid"]) in {(r[0], r[1]) for r in items}]
+            self._alert(fresh)
+            self._consensus(fresh)
         except Exception as e:
             self._err(f"alert: {e}")
         self.db.executemany("UPDATE q SET tries=99 WHERE c=? AND id=?", [(r[0], r[1]) for r in items])
@@ -1431,7 +1591,8 @@ Jei tekste atsakymo nėra – {{"found": false}}.
                 for u, ul in by_u.items():
                     m = _stats(ul)
                     m.update(u=u, name=next((x.get("un") for x in ul if x.get("un")), u),
-                             photos=sum(1 for x in ul if x.get("photo")))
+                             photos=sum(1 for x in ul if x.get("photo")), cats=_by_cat(ul, 1)[:8])
+                    m["best"] = next((c for c in m["cats"] if c["units"] > 0 and c["n"] >= 3), None)
                     if m["n"] or m["pend"]:
                         mem.append(m)
                 mem.sort(key=lambda m: (m["proven"], m["n_odds"] >= 10,
@@ -1453,6 +1614,7 @@ Jei tekste atsakymo nėra – {{"found": false}}.
         for g in groups:
             g["today"] = _stats([b for b in by_c.get(g["cid"], []) if str(b["t"])[:10] == today])
             g["bet"] = _stats(_bettable(by_c.get(g["cid"], [])))
+            g["cats"] = _by_cat(by_c.get(g["cid"], []), 2)[:10]
         od, cnt = self.order()
         fc = next((c for c in od if cnt.get(c)), None)
         for g in groups:
@@ -1504,7 +1666,7 @@ Jei tekste atsakymo nėra – {{"found": false}}.
             recent.append({"t": b["t"], "c": b["c"], "chat": chats.get(b["c"], b["c"]), "who": b.get("un"),
                            "status": b["status"], "odds": b.get("odds"), "photo": b.get("photo", False),
                            "mkt": b.get("mkt"), "gm": b.get("grp_mark"), "bg": b.get("by_group", False),
-                           "vf": b.get("vf"), "dt": [l.get("doubt") for l in b["legs"] if l.get("doubt")],
+                           "vf": b.get("vf"), "clv": b.get("clv"), "cl": b.get("clv_close"), "cat": _cat(b), "dt": [l.get("doubt") for l in b["legs"] if l.get("doubt")],
                            "legs": [{"m": f"{l.get('home')} – {l.get('away') or ''}".strip(" –"), "pick": l.get("pick"),
                                      "st": l.get("status"),
                                      "d": (l.get("detail") or (("⏳ " + l["note"]) if l.get("note") else ""))[:110],
@@ -1521,6 +1683,7 @@ Jei tekste atsakymo nėra – {{"found": false}}.
                 "web_used": self.d.get("web_used", 0),
                 "search": {"n": self.d.get("sweb_used", 0), "ok": self.d.get("sweb_ok", 0),
                            "last": (props.SEARCH_STATE.get("last") if props and hasattr(props, "SEARCH_STATE") else "")},
+                "consensus": self._cons_stats(),
                 "quality": {"verified": sum(1 for b in bets if b.get("vf") is True),
                             "doubts": sum(1 for b in bets if b.get("vf") is False),
                             "grp_agree": sum(1 for b in bets if b.get("grp_mark") and not b.get("by_group")
@@ -1604,6 +1767,53 @@ Atsakyk TIK JSON: {{"res": [{{"i": numeris, "ok": true/false, "why": "trumpai li
             if all("vf" in l for l in b["legs"] if l.get("status") in ("won", "lost", "push")):
                 b["vf"] = all(l.get("vf", True) for l in b["legs"])
 
+    def clv_some(self, limit=4):
+        """Uždarymo koeficientas (prieš pat rungtynes) – ar grupė/žmogus gavo geresnį koef. nei rinka galiausiai.
+        CLV = paskelbtas koef. / uždarymo koef. − 1. Nuolat teigiamas CLV – tikras pranašumas, ne sėkmė."""
+        if not props or not hasattr(props, "market_odds") or not self.cfg.get("apisports_key"):
+            return
+        cut = (datetime.now() - timedelta(days=3)).strftime("%Y-%m-%d")
+        now, done = datetime.now(), 0
+        for b in sorted(self.d["bets"], key=lambda x: str(x["t"]), reverse=True):
+            if done >= limit:
+                break
+            m = b.get("mkt")
+            if "clv" in b or not isinstance(m, dict) or not m.get("odds") or str(b["t"])[:10] < cut or \
+                    b.get("clv_try", 0) >= 3 or b.get("clv_next", 0) > time.time():
+                continue
+            try:
+                if max(self._kick(l, b) for l in b["legs"]) + timedelta(minutes=30) > now:
+                    continue
+            except Exception:
+                continue
+            try:
+                posted = float(b.get("odds") or 0)
+            except Exception:
+                posted = 0
+            if posted <= 1.01:
+                posted = m["odds"] if m.get("pre") else 0
+            if posted <= 1.01:
+                b["clv"] = None
+                continue
+            close = 1.0
+            for l in b["legs"]:
+                lg = dict(l, kickoff=self._kick(l, b).isoformat(timespec="minutes"), created=str(b["t"])[:16])
+                try:
+                    r = props.market_odds(lg, close=True)
+                except Exception:
+                    r = None
+                done += 1
+                if not r or not r.get("odds"):
+                    close = None
+                    break
+                close *= r["odds"]
+            if close is None:
+                b["clv_try"] = b.get("clv_try", 0) + 1
+                b["clv_next"] = time.time() + 6 * 3600
+                continue
+            b["clv"] = round(max(-0.8, min(1.5, posted / close - 1)), 4)
+            b["clv_close"] = round(close, 2)
+
     def odds_some(self, limit=6):
         """Prototipas „ar galima pastatyti“: kiekvienam futbolo statymui – bukmekerių koeficientas prieš rungtynes."""
         if not props or not hasattr(props, "market_odds") or not self.cfg.get("apisports_key"):
@@ -1640,7 +1850,8 @@ Atsakyk TIK JSON: {{"res": [{{"i": numeris, "ok": true/false, "why": "trumpai li
                 o = 1.0
                 for x in got:
                     o *= x
-                b["mkt"] = {"odds": round(o, 2), "posted": b.get("odds"), "legs": len(got)}
+                pre = all(self._kick(l, b) > datetime.now() for l in b["legs"])
+                b["mkt"] = {"odds": round(o, 2), "posted": b.get("odds"), "legs": len(got), "pre": pre}
                 try:
                     po = float(b.get("odds") or 0)
                 except Exception:
@@ -1667,6 +1878,7 @@ Atsakyk TIK JSON: {{"res": [{{"i": numeris, "ok": true/false, "why": "trumpai li
             try:
                 await asyncio.to_thread(self.settle_some)
                 await asyncio.to_thread(self.odds_some)
+                await asyncio.to_thread(self.clv_some)
                 await asyncio.to_thread(self.verify_some)
                 self.save()
             except Exception as e:

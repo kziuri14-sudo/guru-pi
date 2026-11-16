@@ -580,7 +580,8 @@ for k, v in {"paused": False, "quiet": False, "quiet_from": "23:00", "quiet_to":
              "kwh_price": float(CFG.get("kwh_price", 0.25)),
              "notify_guru": True,          # GURU G⚽AL kanalo signalai
              "follow": [],                 # pažymėtos grupės „g:<id>“ ir žmonės „m:<id>:<narys>“ – tik iš jų pranešimai
-             "auto_proven": False}.items():  # ⭐ pranešimai ir apie nepažymėtas, bet statistiškai patikimas grupes
+             "auto_proven": False,
+             "consensus_min": 3}.items():  # 🔥 pranešimas, kai tą patį stato ≥N skirtingų šaltinių (0 – išjungta)  # ⭐ pranešimai ir apie nepažymėtas, bet statistiškai patikimas grupes
     SETTINGS.setdefault(k, v)
 
 
@@ -896,8 +897,13 @@ class Dash(BaseHTTPRequestHandler):
             for k in ("paused", "quiet", "notify_guru", "auto_proven"):
                 if k in body:
                     SETTINGS[k] = bool(body[k])
+            try:
+                if "consensus_min" in body:
+                    SETTINGS["consensus_min"] = min(max(int(body["consensus_min"]), 0), 6)
+            except Exception:
+                pass
             if isinstance(body.get("follow"), list):
-                SETTINGS["follow"] = [str(x)[:120] for x in body["follow"] if re.fullmatch(r"[gm]:[^\s]{1,110}", str(x))][:300]
+                SETTINGS["follow"] = [str(x)[:160] for x in body["follow"] if re.fullmatch(r"[gm]:[^\n]{1,150}", str(x))][:300]
             for k in ("quiet_from", "quiet_to"):
                 if re.fullmatch(r"\d{2}:\d{2}", str(body.get(k, ""))):
                     SETTINGS[k] = body[k]

@@ -1319,10 +1319,10 @@ def _apis_fixture(leg):
     return (best[1], best[2], best[3]) if best else (None, False, None)
 
 
-def _odds_raw(fid):
+def _odds_raw(fid, close=False):
     key = (CFG or {}).get("apisports_key")
-    f = (CACHE_DIR / f"odds_{fid}.json") if CACHE_DIR else None
-    if f and f.exists() and time.time() - f.stat().st_mtime < 6 * 3600:
+    f = (CACHE_DIR / f"odds_{fid}{'_close' if close else ''}.json") if CACHE_DIR else None
+    if f and f.exists() and (close or time.time() - f.stat().st_mtime < 6 * 3600):
         try:
             return json.loads(f.read_text("utf-8"))
         except Exception:
@@ -1415,7 +1415,7 @@ def _wanted(leg, m, sw):
     return None
 
 
-def market_odds(leg):
+def market_odds(leg, close=False):
     """Ar šį statymą buvo galima pastatyti prieš rungtynes ir už kiek: {"odds": mediana, "best", "book", "n"}.
     None – rinkos nėra / ne futbolas / nežinoma; {"none": priežastis} – tikrai nerasta."""
     if not (CFG or {}).get("apisports_key"):
@@ -1426,7 +1426,9 @@ def market_odds(leg):
     want = _wanted(leg, m, sw)
     if not want:
         return {"none": "rinka netikrinama (ne pagrindinė)"}
-    books = _odds_raw(m["id"])
+    if close and t and t + timedelta(minutes=20) > datetime.now():
+        return None                                       # uždarymo koef. – tik prasidėjus rungtynėms
+    books = _odds_raw(m["id"], close)
     if books is None:
         return None
     if not books:
