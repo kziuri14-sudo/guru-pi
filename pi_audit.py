@@ -1213,13 +1213,24 @@ Jei tekste atsakymo nėra – {{"found": false}}.
             except Exception:
                 continue
             g = gm.get(b["c"])
+            st = getattr(self, "settings", None) or {}
+            follow = set(st.get("follow") or [])
+            m = next((x for x in (g or {}).get("members") or [] if x["u"] == str(b.get("u"))), None) if b.get("u") else None
+            fm, fg = f"m:{b['c']}:{b.get('u')}" in follow, f"g:{b['c']}" in follow
             why = None
-            if g and b.get("u"):
-                m = next((x for x in g.get("members") or [] if x["u"] == str(b["u"])), None)
-                if m and m["proven"]:
-                    why = f"narys {m['name']}: {m['hit']}% pataikymas, ROI {m['roi']:+}% ({m['n_odds']} patikrinti st.)"
-            if not why and g and g["proven"]:
-                why = f"grupė: {g['hit']}% pataikymas, ROI {g['roi']:+}% ({g['n_odds']} patikrinti st.)"
+            stat = lambda x: f"{x['hit'] if x.get('hit') is not None else '–'}% pataikymas, pelnas {x.get('units', 0):+.1f} vnt. " \
+                             f"({x.get('n', 0)} patikr. st.)"
+            if fm and m:
+                why = f"👤 sekamas {m['name']}: {stat(m)}"
+            elif fm:
+                why = "👤 sekamas žmogus"
+            elif fg:
+                why = f"sekama grupė: {stat(g)}" if g and g.get("n") else "sekama grupė"
+            elif st.get("auto_proven") or not st:          # be nustatymų (seni) – kaip anksčiau: tik patikimi
+                if m and m.get("proven"):
+                    why = f"⭐ patikimas narys {m['name']}: {stat(m)}"
+                elif g and g.get("proven"):
+                    why = f"⭐ patikima grupė: {stat(g)}"
             if not why:
                 continue
             legs = b["legs"]

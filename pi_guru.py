@@ -342,7 +342,7 @@ async def handle(msg, name):
     body += "\n" + ("Paspausk – atsidarys rungtynės fs7.casino." if exact else
                     "Paspausk – fs7 paieška su jau įvestu pavadinimu." if link else
                     "Paspaudus atsidarys fs7 sporto puslapis.")
-    if SETTINGS.get("paused"):
+    if SETTINGS.get("paused") or not SETTINGS.get("notify_guru", True):
         log.info("⏸ pranešimai sustabdyti – nesiųsta: %s", title)
         add_event("skip", "(sustabdyta) " + title, time.time() - t0, link=link)
         return
@@ -577,7 +577,10 @@ except Exception:
     SETTINGS = {}
 SETTINGS.setdefault("token", secrets.token_urlsafe(12))
 for k, v in {"paused": False, "quiet": False, "quiet_from": "23:00", "quiet_to": "08:00",
-             "kwh_price": float(CFG.get("kwh_price", 0.25))}.items():
+             "kwh_price": float(CFG.get("kwh_price", 0.25)),
+             "notify_guru": True,          # GURU G⚽AL kanalo signalai
+             "follow": [],                 # pažymėtos grupės „g:<id>“ ir žmonės „m:<id>:<narys>“ – tik iš jų pranešimai
+             "auto_proven": False}.items():  # ⭐ pranešimai ir apie nepažymėtas, bet statistiškai patikimas grupes
     SETTINGS.setdefault(k, v)
 
 
@@ -890,9 +893,11 @@ class Dash(BaseHTTPRequestHandler):
         if not secrets.compare_digest(str(body.get("k", "")), SETTINGS["token"]):
             return self._send(403, "neleidžiama – atidaryk puslapį iš Raspberry pranešimo", "text/plain; charset=utf-8")
         if path == "/settings":
-            for k in ("paused", "quiet"):
+            for k in ("paused", "quiet", "notify_guru", "auto_proven"):
                 if k in body:
                     SETTINGS[k] = bool(body[k])
+            if isinstance(body.get("follow"), list):
+                SETTINGS["follow"] = [str(x)[:120] for x in body["follow"] if re.fullmatch(r"[gm]:[^\s]{1,110}", str(x))][:300]
             for k in ("quiet_from", "quiet_to"):
                 if re.fullmatch(r"\d{2}:\d{2}", str(body.get(k, ""))):
                     SETTINGS[k] = body[k]
@@ -968,6 +973,24 @@ def tunnel(port):
             log.error("Tunelis nepavyko: %s", e)
         STATE["url"] = None
         time.sleep(30)
+
+
+def app_beacon():
+    """Telefono programėlei: dabartinis puslapio adresas tyliai skelbiamas į atskirą ntfy temą „<tema>-app“
+    (jos niekas neprenumeruoja – pranešimų nebus). Programėlė iš ten sužino, kur jungtis, net kai adresas pasikeičia."""
+    last, sent = None, 0
+    while True:
+        try:
+            link = dash_link()
+            if link and (link != last or time.time() - sent > 4 * 3600):
+                req = urllib.request.Request(NTFY + "-app", data=link.encode(), method="POST",
+                                             headers={"Title": "guru-app", "Priority": "1", "Cache": "yes"})
+                with urllib.request.urlopen(req, timeout=20):
+                    pass
+                last, sent = link, time.time()
+        except Exception as e:
+            log.info("programėlės adresas: %s", e)
+        time.sleep(60)
 
 
 # ---------------------------------------------------------------- atnaujinimai iš GitHub (be kompiuterio)
@@ -1092,6 +1115,8 @@ async def start_audit(client):
         AUDIT["a"] = pi_audit.Auditor(client, CFG, log, BASE, BOOT)
 
         def _note(title, msg, legs):
+            if SETTINGS.get("paused"):
+                return
             link = search_link(msg, legs)
             try:
                 ntfy(title, msg, click=link, priority=2 if quiet_now() else 4)
@@ -1099,6 +1124,7 @@ async def start_audit(client):
             except Exception as e:
                 log.info("audito pranešimas: %s", e)
         AUDIT["a"].notify = _note
+        AUDIT["a"].settings = SETTINGS              # pažymėti žmonės / grupės pranešimams
         log.info("📈 Grupių auditas paleistas (fone)")
         await AUDIT["a"].run()
     except Exception as e:
@@ -1138,6 +1164,7 @@ async def main():
     STATE["tg"] = True
     port = start_dash()
     threading.Thread(target=tunnel, args=(port,), daemon=True).start()
+    threading.Thread(target=app_beacon, daemon=True).start()
     asyncio.create_task(sampler(client))
     asyncio.create_task(github_updater())
     if CFG.get("audit", True):

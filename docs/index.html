@@ -1,0 +1,65 @@
+<!doctype html><html lang="lt"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Lažybų analitika</title>
+<meta name="theme-color" content="#0b0d12">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Guru">
+<link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="icon.svg"><link rel="apple-touch-icon" href="icon-192.png">
+<style>
+:root{--bg:#f4f5f7;--card:#fff;--fg:#0f1419;--mut:#6b7280;--line:#e7e9ee;--acc:#4f46e5;--bad:#dc2626;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#0b0d12;--card:#151821;--fg:#eef0f4;--mut:#9aa1ad;--line:#232733;--acc:#8b85ff;--bad:#f87171;color-scheme:dark}}
+*{box-sizing:border-box}html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif}
+iframe{position:fixed;inset:0;width:100%;height:100%;border:0;background:var(--bg);display:none}
+.box{max-width:420px;margin:0 auto;padding:max(48px,env(safe-area-inset-top)) 20px 24px;text-align:center}
+.logo{width:72px;height:72px;margin:0 auto 16px}
+h1{font-size:22px;margin:0 0 6px;letter-spacing:-.02em}.sub{color:var(--mut);font-size:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin-top:20px;text-align:left}
+input{width:100%;font:inherit;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--bg);color:var(--fg);margin:8px 0 12px}
+button{width:100%;font:inherit;font-weight:600;padding:12px;border:0;border-radius:12px;background:var(--acc);color:#fff;cursor:pointer}
+button.ghost{background:transparent;color:var(--acc);border:1px solid var(--line);margin-top:8px}
+.spin{width:28px;height:28px;border:3px solid var(--line);border-top-color:var(--acc);border-radius:50%;margin:24px auto;animation:s 1s linear infinite}
+@keyframes s{to{transform:rotate(360deg)}}.err{color:var(--bad)}
+</style></head><body>
+<div class="box" id="ui">
+  <img class="logo" src="icon.svg" alt="">
+  <h1>Lažybų analitika</h1><div class="sub" id="msg">Jungiamasi prie Raspberry…</div>
+  <div class="spin" id="spin"></div>
+  <div class="card" id="setup" style="display:none">
+    <b>Pirmas paleidimas</b>
+    <div class="sub">Įvesk Raspberry kodą – tai tavo ntfy tema (ją matai ntfy programėlėje, prasideda „signalbot-“). Įvesti reikia tik kartą.</div>
+    <input id="topic" placeholder="signalbot-…" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <button id="save">Prisijungti</button>
+  </div>
+  <div id="again" style="display:none"><button id="retry">Bandyti dar kartą</button><button class="ghost" id="reset">Pakeisti kodą</button></div>
+</div>
+<iframe id="app" title="Lažybų analitika" allow="clipboard-write"></iframe>
+<script>
+const $=id=>document.getElementById(id);
+const store={get(k){try{return localStorage.getItem(k)}catch(e){return null}},set(k,v){try{localStorage.setItem(k,v)}catch(e){}},del(k){try{localStorage.removeItem(k)}catch(e){}}};
+let topic=null,cur=null;
+const h=location.hash.match(/t=([A-Za-z0-9_-]{6,64})/);
+if(h){store.set('topic',h[1]);topic=h[1];history.replaceState(null,'',location.pathname)}else topic=store.get('topic');
+function show(state,text){$('msg').textContent=text||'';$('msg').className='sub'+(state==='err'?' err':'');
+  $('spin').style.display=state==='load'?'':'none';$('setup').style.display=state==='setup'?'':'none';$('again').style.display=state==='err'?'':'none'}
+async function poll(t){const r=await fetch(`https://ntfy.sh/${encodeURIComponent(t)}/json?poll=1&since=12h`,{cache:'no-store'});
+  if(!r.ok)throw new Error('ntfy '+r.status);return (await r.text()).trim().split('\n').map(l=>{try{return JSON.parse(l)}catch(e){return null}}).filter(Boolean)}
+async function findUrl(){
+  try{const a=await poll(topic+'-app');const m=a.filter(x=>/^https:\/\/[a-z0-9-]+\.trycloudflare\.com\//.test(x.message||'')).pop();if(m)return m.message.trim()}catch(e){}
+  const b=await poll(topic);const m=b.filter(x=>/trycloudflare\.com/.test(x.click||'')).pop();return m?m.click:null}
+async function alive(u){try{await fetch(new URL('/api',u).href,{mode:'no-cors',cache:'no-store'});return true}catch(e){return false}}
+async function connect(){
+  if(!topic){show('setup','');return}
+  show('load','Jungiamasi prie Raspberry…');
+  let u=null;try{u=await findUrl()}catch(e){show('err','Nėra interneto arba neteisingas kodas.');return}
+  if(!u){show('err','Raspberry adreso dar nėra. Jei Raspberry ką tik įjungtas – palauk 2–3 min.');return}
+  if(!(await alive(u))){show('err','Raspberry nepasiekiamas – patikrink, ar jis įjungtas ir prisijungęs prie interneto.');return}
+  if(u!==cur){cur=u;$('app').src=u}
+  $('app').style.display='block';$('ui').style.display='none'}
+$('save').onclick=()=>{const v=$('topic').value.trim().replace(/^https?:\/\/ntfy\.sh\//,'');if(!/^[A-Za-z0-9_-]{6,64}$/.test(v)){show('setup','Kodas atrodo neteisingas.');return}
+  store.set('topic',v);topic=v;connect()};
+$('retry').onclick=connect;$('reset').onclick=()=>{store.del('topic');topic=null;cur=null;show('setup','')};
+connect();
+setInterval(async()=>{if(!topic||document.hidden)return;try{const u=await findUrl();if(u&&u!==cur&&await alive(u)){cur=u;$('app').src=u}}catch(e){}},120000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&topic&&!cur)connect()});
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+</script></body></html>

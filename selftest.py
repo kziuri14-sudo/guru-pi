@@ -375,9 +375,31 @@ def ai_verifier_flags_doubts():
 
 
 @test
+def alerts_only_for_followed():
+    import pi_audit as A
+    from pathlib import Path
+    d = tempfile.mkdtemp()
+    a = A.Auditor(None, {}, logging.getLogger("t"), Path(d), Path(d))
+    a.d["chats"], a.d["kind"] = {"c1": "Chat", "c2": "Kitas"}, {"c1": "group", "c2": "group"}
+    sent = []
+    a.notify = lambda title, msg, legs: sent.append(title)
+    a.settings = {"follow": ["m:c1:77"], "auto_proven": False}
+    now = datetime.now()
+    kick = (now + timedelta(hours=3)).strftime("%Y-%m-%dT%H:%M")
+    mk = lambda c, u: {"c": c, "mid": 1, "u": u, "un": "Jonas", "t": now.astimezone().isoformat(timespec="minutes"),
+                       "status": "pending", "legs": [{"home": "A", "away": "B", "pick": "1", "kickoff": kick}]}
+    a._alert([mk("c1", "77"), mk("c1", "88"), mk("c2", "77")])
+    assert len(sent) == 1, sent
+    a.settings = {"follow": ["g:c2"]}
+    sent.clear()
+    a._alert([mk("c1", "77"), mk("c2", "5")])
+    assert len(sent) == 1, sent
+
+
+@test
 def dashboard_has_required_parts():
     h = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "dash.html"), encoding="utf-8").read()
-    for x in ("fetch('/api'", "id=\"dayTable\"", "id=\"sigCard\"", "id=\"qLog\"", "Powered by SportScore", "function renderBets",
+    for x in ("fetch('/api'", "id=\"dayTable\"", "id=\"sigCard\"", "id=\"qLog\"", "toggleFollow", "id=\"n_guru\"", "Powered by SportScore", "function renderBets",
               "post('/settings'"):
         assert x in h, x
 

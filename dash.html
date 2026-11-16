@@ -77,6 +77,8 @@ section{display:none}section.on{display:block}
 .toast{position:fixed;left:50%;bottom:96px;transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:10px 16px;border-radius:12px;font-size:14px;font-weight:600;display:none;z-index:20}
 table{width:100%;border-collapse:collapse;font-size:14px}th,td{padding:8px 4px;border-top:1px solid var(--line);text-align:left}
 th{font-size:12px;color:var(--mut);font-weight:600;border-top:0}td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+.star{font:inherit;border:0;background:transparent;font-size:22px;line-height:1;padding:4px 6px;cursor:pointer;color:var(--mut)}
+.star.on{color:#f5b301}
 .foot{font-size:12px;color:var(--mut);text-align:center;margin:8px 0 0}.foot a{color:var(--acc)}
 .prog{height:6px;background:var(--soft);border-radius:3px;overflow:hidden;margin-top:8px}.prog i{display:block;height:100%;background:var(--acc)}
 </style></head><body><div class="wrap">
@@ -130,6 +132,11 @@ th{font-size:12px;color:var(--mut);font-weight:600;border-top:0}td.n,th.n{text-a
     <div id="qLog"></div></div>
   <div class="card"><h2>Rezultatų šaltiniai</h2><div id="srcList"></div></div>
   <div class="card"><h2>GURU G⚽AL signalai</h2><div id="sigList"></div></div>
+  <div class="card"><h2>Pranešimai telefonu</h2><div class="set">
+    <label>GURU G⚽AL signalai <input type="checkbox" id="n_guru"></label>
+    <label>Ir apie nepažymėtas, bet patikimas (⭐) grupes <input type="checkbox" id="n_auto"></label>
+    <div class="sub">Pranešimus gausi tik iš grupių ir žmonių, pažymėtų ★ (skiltis „Grupės“ → paspausk grupę → ★ prie žmogaus).</div>
+    <div id="followList"></div></div></div>
   <div class="card"><h2>Nustatymai</h2><div class="set" id="set">
     <label>Pranešimai sustabdyti <input type="checkbox" id="s_paused"></label>
     <label>Tylios valandos <input type="checkbox" id="s_quiet"></label>
@@ -203,7 +210,7 @@ function renderHome(){const a=D.audit||{};const s=PER==='today'?a.today_total:PE
 function groupStats(g){return GPER==='today'?(g.today||{}):GPER==='bet'?(g.bet||{}):g}
 function renderGroups(){const a=D.audit||{};const gs=(a.groups||[]).map(g=>({g,s:groupStats(g)})).filter(x=>(x.s.n||0)+(x.s.pend||0)>0||GPER==='all');
   gs.sort((x,y)=>(y.s.units||0)-(x.s.units||0)||(y.s.n||0)-(x.s.n||0));
-  $('grpList').innerHTML=gs.map(({g,s})=>`<div class="row" onclick="openGroup('${esc(g.cid)}')"><div class="main"><div class="t">${g.proven?'⭐ ':''}${esc(N(g.chat))}<span class="badge">${g.kind==='group'?'pokalbiai':'kanalas'}</span></div>
+  $('grpList').innerHTML=gs.map(({g,s})=>`<div class="row" onclick="openGroup('${esc(g.cid)}')">${starBtn('g:'+g.cid)}<div class="main"><div class="t">${g.proven?'⭐ ':''}${esc(N(g.chat))}<span class="badge">${g.kind==='group'?'pokalbiai':'kanalas'}</span></div>
    <div class="s">${s.w||0}–${s.l||0}${s.pend?' · laukia '+s.pend:''} · pataikymas ${pct(s.hit)}${g.late?' · ⚠ '+g.late+' po rungtynių':''}${g.state==='analizuojama'?' · skaitoma':''}</div></div>
    <div class="r ${cls(s.units)}">${u(s.units)}<small>vnt.</small></div></div>`).join('')||'<div class="empty">Šiandien dar nėra statymų</div>';
   document.querySelectorAll('#grpSeg button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.per===GPER))}
@@ -242,15 +249,24 @@ function renderBets(){const R=(D.audit&&D.audit.recent)||[];const mk=ST==='bet';
   document.querySelectorAll('#betChips button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.st===ST))}
 function openGroup(cid){const a=D.audit||{};const g=(a.groups||[]).find(x=>x.cid===cid);if(!g)return;const s=g;
   const mem=(g.members||[]).filter(m=>m.n||m.pend);const R=(a.recent||[]).filter(b=>b.c===cid);
-  $('pane').innerHTML=`<div class="grab"></div><h1 style="font-size:20px">${g.proven?'⭐ ':''}${esc(N(g.chat))}</h1><div class="sub" style="margin-bottom:12px">${g.kind==='group'?'Pokalbių grupė':'Kanalas'} · nuo pradžios</div>
+  $('pane').innerHTML=`<div class="grab"></div><h1 style="font-size:20px;display:flex;align-items:center;gap:4px">${starBtn('g:'+g.cid)}<span>${g.proven?'⭐ ':''}${esc(N(g.chat))}</span></h1><div class="sub">★ prie grupės – pranešimai apie visus jos statymus</div><div class="sub" style="margin-bottom:12px">${g.kind==='group'?'Pokalbių grupė':'Kanalas'} · nuo pradžios</div>
   <div class="grid2" style="margin-bottom:12px"><div class="stat"><b class="${cls(s.units)}">${u(s.units)} vnt.</b><span>pelnas</span></div><div class="stat"><b>${pct(s.hit)}</b><span>pataikymas</span></div>
   <div class="stat"><b>${s.w}–${s.l}${s.p?'–'+s.p:''}</b><span>laimėta–pralaimėta</span></div><div class="stat"><b>${s.avg_odds??'–'}</b><span>vid. koeficientas</span></div></div>
   ${g.late?`<div class="card" style="color:var(--warn)">⚠ ${g.late} „prognozės“ paskelbtos jau po rungtynių – neįskaitomos</div>`:''}
-  ${mem.length?`<div class="card"><h2>Nariai – kas pataiko</h2><table><tr><th>Narys</th><th class="n">W–L</th><th class="n">%</th><th class="n">vnt.</th></tr>${mem.map(m=>`<tr><td>${m.proven?'⭐ ':''}${esc(m.name)}</td><td class="n">${m.w}–${m.l}</td><td class="n">${pct(m.hit)}</td><td class="n ${cls(m.units)}">${u(m.units,1)}</td></tr>`).join('')}</table></div>`:''}
+  ${mem.length?`<div class="card"><h2>Nariai – kas pataiko</h2><div class="sub" style="margin-bottom:6px">★ – gauti pranešimus, kai šis žmogus paskelbia statymą</div><table><tr><th></th><th>Narys</th><th class="n">W–L</th><th class="n">%</th><th class="n">vnt.</th></tr>${mem.map(m=>`<tr><td style="width:34px">${starBtn('m:'+g.cid+':'+m.u)}</td><td>${m.proven?'⭐ ':''}${esc(m.name)}</td><td class="n">${m.w}–${m.l}</td><td class="n">${pct(m.hit)}</td><td class="n ${cls(m.units)}">${u(m.units,1)}</td></tr>`).join('')}</table></div>`:''}
   ${R.length?`<div class="card">${dayTableHtml(R,false,'')}</div>`:''}
   ${groupedHtml(R,false,80)||'<div class="card"><div class="empty">Statymų nėra</div></div>'}
   <button class="btn" style="width:100%" onclick="closeSheet()">Uždaryti</button>`;
   $('sheet').classList.add('on')}
+function follows(){return new Set(((D&&D.settings)||{}).follow||[])}
+function starBtn(key){const on=follows().has(key);return `<button class="star${on?' on':''}" title="Pranešimai" aria-pressed="${on}" onclick="event.stopPropagation();toggleFollow('${esc(key)}',this)">${on?'★':'☆'}</button>`}
+async function saveNotify(extra){if(!K){toast('Atidaryk programėlę iš Raspberry nuorodos');return false}
+  try{await post('/settings',extra);D.settings=Object.assign(D.settings||{},extra);return true}catch(e){toast('Nepavyko: '+e.message);return false}}
+async function toggleFollow(key,btn){const f=follows();const on=!f.has(key);on?f.add(key):f.delete(key);
+  if(await saveNotify({follow:[...f]})){document.querySelectorAll('.star').forEach(b=>{const k=(b.getAttribute('onclick').match(/toggleFollow\('([^']+)'/)||[])[1];if(k===key){b.classList.toggle('on',on);b.textContent=on?'★':'☆'}});
+    toast(on?'★ Gausi pranešimus':'Pranešimai išjungti');if(view()==='daugiau')renderMore()}}
+function followName(k){const a=(D&&D.audit)||{};const p=k.split(':');const g=(a.groups||[]).find(x=>x.cid===p[1]);
+  if(p[0]==='g')return g?N(g.chat):p[1];const m=g&&(g.members||[]).find(x=>String(x.u)===p.slice(2).join(':'));return (m?m.name:'žmogus')+' · '+(g?N(g.chat):'')}
 function closeSheet(){$('sheet').classList.remove('on')}
 $('sheet').onclick=e=>{if(e.target.id==='sheet')closeSheet()};
 function renderMore(){const c=D.current||{},en=D.energy||{},a=D.audit||{};
@@ -263,6 +279,8 @@ function renderMore(){const c=D.current||{},en=D.energy||{},a=D.audit||{};
   $('qLog').innerHTML=(q.log||[]).length?'<div class="sub" style="margin:6px 0">Paskutinės abejonės (peržiūrimos ir taisomos):</div>'+(q.log||[]).map(x=>`<div class="row" style="cursor:default"><div class="main"><div class="t">${esc(x.pick)}</div><div class="s">${esc(x.why)}</div></div><div class="r"><small>${esc(String(x.t).slice(5,16).replace('T',' '))}</small></div></div>`).join(''):'<div class="sub">Abejonių nėra.</div>';
   const sig=(D.events||[]).filter(e=>e.kind==='signal').slice(-15).reverse();
   $('sigList').innerHTML=sig.map(e=>`<div class="row" style="cursor:default"><div class="main"><div class="t">${esc((e.text||'').split('\n')[0])}</div><div class="s">${esc((e.text||'').split('\n').slice(1).join(' · '))}</div></div><div class="r"><small>${new Date(e.t).toLocaleString('lt',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}</small>${e.link?`<a class="link" href="${esc(e.link)}" target="_blank" rel="noopener">Atidaryti</a>`:''}</div></div>`).join('')||'<div class="empty">Signalų dar nebuvo</div>';
+  const sN=D.settings||{};$('n_guru').checked=sN.notify_guru!==false;$('n_auto').checked=!!sN.auto_proven;
+  const fl=[...follows()];$('followList').innerHTML=fl.length?fl.map(k=>`<div class="row" style="cursor:default">${starBtn(k)}<div class="main"><div class="t">${esc(followName(k))}</div><div class="s">${k[0]==='g'?'visa grupė':'žmogus'}</div></div></div>`).join(''):'<div class="sub">Dar nieko nepažymėta.</div>';
   const s=D.settings||{};if(!$('set').contains(document.activeElement)){$('s_paused').checked=!!s.paused;$('s_quiet').checked=!!s.quiet;$('s_qf').value=s.quiet_from||'23:00';$('s_qt').value=s.quiet_to||'08:00';$('s_price').value=s.kwh_price??0.25}
   $('setnote').textContent=K?'':'Keisti galima tik atidarius puslapį iš Raspberry pranešimo nuorodos.';['b_save','b_test'].forEach(i=>$(i).disabled=!K)}
 function render(){if(!D)return;const v=view();$('hdate').textContent=new Date().toLocaleDateString('lt',{weekday:'long',month:'long',day:'numeric'});
@@ -271,6 +289,8 @@ async function full(){try{const r=await fetch('/api',{cache:'no-store'});D=await
 async function live(){if(view()!=='daugiau')return;try{const p=await (await fetch('/live',{cache:'no-store'})).json();$('rCpu').textContent=Math.round(p.cpu)+' %';$('rW').textContent=p.w.toFixed(2)+' W';$('rTemp').textContent=p.temp.toFixed(1)+' °C'}catch(e){}}
 async function post(path,body){const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...body,k:K})});if(!r.ok)throw new Error(await r.text());return r.json()}
 $('b_save').onclick=async()=>{try{await post('/settings',{paused:$('s_paused').checked,quiet:$('s_quiet').checked,quiet_from:$('s_qf').value,quiet_to:$('s_qt').value,kwh_price:+$('s_price').value});toast('Išsaugota');full()}catch(e){toast('Nepavyko: '+e.message)}};
+$('n_guru').onchange=e=>saveNotify({notify_guru:e.target.checked}).then(ok=>ok&&toast('Išsaugota'));
+$('n_auto').onchange=e=>saveNotify({auto_proven:e.target.checked}).then(ok=>ok&&toast('Išsaugota'));
 $('b_test').onclick=async()=>{try{await post('/test',{});toast('Išsiųsta – patikrink telefoną')}catch(e){toast('Nepavyko: '+e.message)}};
 document.querySelectorAll('#perSeg button').forEach(b=>b.onclick=()=>{PER=b.dataset.per;try{localStorage.setItem('per',PER)}catch(e){}render()});
 document.querySelectorAll('#grpSeg button').forEach(b=>b.onclick=()=>{GPER=b.dataset.per;try{localStorage.setItem('gper',GPER)}catch(e){}render()});
