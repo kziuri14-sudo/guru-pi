@@ -180,7 +180,15 @@ def _penalty(b, e):
 
 
 def find(b):
-    """Grąžina LiveScore rungtynes, kurios atitinka statymą, arba None."""
+    """Grąžina LiveScore rungtynes, kurios atitinka statymą, arba None.
+    Pirma ieškom ±30 val. nuo paskelbimo; neradus – iki 7 dienų į priekį (statymas gali būti iš anksto)."""
+    e = _find(b)
+    if e is None and b.get("home") and b.get("away"):
+        e = _find(b, ahead_h=7 * 24)
+    return e
+
+
+def _find(b, ahead_h=30):
     home, away = b.get("home") or "", b.get("away") or ""
     if not home:
         return None
@@ -193,9 +201,13 @@ def find(b):
     if not sp and (b.get("league") or "").upper() in ("NBA", "EUROLEAGUE", "LKL"):
         sp = "basketball"
     sports = [sp] + [s for s in ALL if s != sp] if sp else list(ALL)
+    if ahead_h > 30:
+        if not sp:
+            return None
+        sports = [sp]                                    # tolimesnių dienų – tik savo sporto šaka
     best = None
     for sport in sports:
-        first, last = (min(ref, created) - timedelta(hours=30)).date(), (created + timedelta(hours=30)).date()
+        first, last = (min(ref, created) - timedelta(hours=30)).date(), (created + timedelta(hours=ahead_h)).date()
         days = sorted({first + timedelta(days=i) for i in range((last - first).days + 1)},
                       key=lambda d: abs((d - ref.date()).days))
         for d in days:
@@ -222,12 +234,12 @@ def find(b):
                 if b.get("women") is True and not ev_w or b.get("women") is False and ev_w:
                     continue                             # vyrų statymas ≠ moterų rungtynės (ir atvirkščiai)
                 # ieškom ir anksčiau prasidėjusių – kad pagautume „prognozes“, paskelbtas jau po rungtynių
-                if not (created - timedelta(hours=30) <= e["_start"] <= created + timedelta(hours=30)):
+                if not (created - timedelta(hours=30) <= e["_start"] <= created + timedelta(hours=ahead_h)):
                     continue
                 score = abs((e["_start"] - ref).total_seconds()) / 3600 + _penalty(b, e) + \
                     (0 if sport == sports[0] else 2) + (0 if away else 1)
                 if e["_start"] + timedelta(hours=_DUR.get(sport, 3.0)) < created:
-                    score += 5                           # jau pasibaigusios iki paskelbimo – renkamės kitas, jei yra
+                    score += 30                          # jau pasibaigusios iki paskelbimo – renkamės kitas, jei yra
                 if best is None or score < best[0]:
                     best = (score, e, sw_)
         if best and best[0] < 6:
@@ -325,6 +337,12 @@ PLAYER_RE = re.compile(r"\b(assist\w*|rebound\w*|3 ?pt\w*|3 ?pointer\w*|three\w*
 BTTS_RE = re.compile(r"\bbtts\b|both teams? (to )?score|both to score|abi komandos (pelnys|imus|ives)|abi imus|\bgg\b|\bng\b")
 
 
+def team_subject(b):
+    sj = str(b.get("subject") or "")
+    return bool(sj) and (same(sj, b.get("home")) or same(sj, b.get("away")) or
+                         bool(re.search(r"\bvs?\b|–|-", sj)) and (same(b.get("home"), sj) or same(b.get("away"), sj)))
+
+
 def evaluate(b, e):
     """Grąžina (status, detail) arba (None, priežastis), jei šio statymo pagal LiveScore įvertinti negalima."""
     st = state(e)
@@ -357,6 +375,8 @@ def evaluate(b, e):
     mw = re.search(r"(?<![A-Za-z0-9])[WP]\s?([12])(?![A-Za-z0-9])", str(b.get("pick") or ""))
     if side == "Win" and mw:                               # W1 = namų, W2 = svečių komanda
         team = (b.get("home") if mw.group(1) == "1" else b.get("away")) or team
+    if b.get("subject") and team_subject(b):
+        b = dict(b, subject=None)                      # „žaidėjas“ iš tikro komanda (pvz. „PAO vs Barca“)
     if BTTS_RE.search(pick):
         side = "BTTS"
         team = "no" if re.search(r"\b(no|ne)\b", pick) else "yes"
@@ -526,7 +546,7 @@ def settle(b):
     return res
 
 
-SOURCES = [("ESPN/EuroLeague", "alt_event"), ("API-Sports", "apisports_event"), ("SportScore", "sportscore_event"),
+SOURCES = [("ESPN/EuroLeague", "alt_event"), ("ESPN MMA", "mma_event"), ("API-Sports", "apisports_event"), ("SportScore", "sportscore_event"),
            ("FotMob", "fotmob_event"),
            ("365Scores", "s365_event"), ("SofaScore", "sofa_event")]
 

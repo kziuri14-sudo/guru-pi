@@ -343,6 +343,9 @@ def is_prop(leg):
     t = _fold(f"{leg.get('pick')} {leg.get('market') or ''}")
     if R.BTTS_RE.search(t):
         return False                                  # „abi komandos įmuš“ – ne žaidėjo statymas
+    if leg.get("subject") and R.team_subject(leg):
+        leg = dict(leg, subject=None)
+        return bool(CORNER_RE.search(t) or CARD_RE.search(t) or SHOTS_RE.search(t) or R.PLAYER_RE.search(t))
     if leg.get("subject"):
         return True
     if CORNER_RE.search(t) or CARD_RE.search(t) or SHOTS_RE.search(t):
@@ -1264,3 +1267,62 @@ def search_context(queries, pages=2, n=8):
         if t:
             chunks.append(f"[puslapis] {u}\n{t}")
     return "\n\n".join(chunks)[:16000], urls
+
+
+# ---------------------------------------------------------------- MMA (UFC ir kt.) – ESPN kovų rezultatai
+MMA_PATHS = ["mma/ufc", "mma/pfl", "mma/bellator"]
+
+
+def mma_event(leg):
+    """Kovos nugalėtojas iš ESPN (UFC, PFL, Bellator). Grąžina LiveScore formatą: laimėtojui 1, pralaimėtojui 0."""
+    sp = _fold(f"{leg.get('sport')} {leg.get('league')}")
+    if not re.search(r"\bmma\b|ufc|pfl|bellator|fight|boks|box", sp):
+        return None
+    k, c = _when(leg)
+    best = None
+    for path in MMA_PATHS:
+        for d in (k.date(), k.date() - timedelta(days=1), k.date() + timedelta(days=1)):
+            old = d < (datetime.now() - timedelta(days=2)).date()
+            try:
+                data = _get(f"{ESPN}/{path}/scoreboard?dates={d:%Y%m%d}", ttl=86400 if old else 900)
+            except Exception:
+                continue
+            for ev in data.get("events") or []:
+                for comp in ev.get("competitions") or []:
+                    cs = comp.get("competitors") or []
+                    if len(cs) != 2:
+                        continue
+                    nm = [((x.get("athlete") or {}).get("displayName") or (x.get("athlete") or {}).get("fullName") or "")
+                          for x in cs]
+                    ok, sw = _pair(leg, [nm[0]], [nm[1]])
+                    if not ok:                            # kovotojai – užtenka pavardžių (vardai rašomi įvairiai)
+                        ln = lambda x: [w for w in _fold(re.sub(r"\(.*?\)", "", x or "")).split() if len(w) >= 4][-1:]
+                        h, a = ln(leg.get("home")), ln(leg.get("away"))
+                        f0, f1 = _fold(nm[0]).split(), _fold(nm[1]).split()
+                        if h and a and h[0] in f0 and a[0] in f1:
+                            ok, sw = True, False
+                        elif h and a and h[0] in f1 and a[0] in f0:
+                            ok, sw = True, True
+                    if not ok:
+                        continue
+                    try:
+                        t = datetime.fromisoformat(str(comp.get("date") or ev.get("date")).replace("Z", "+00:00")) \
+                            .astimezone().replace(tzinfo=None)
+                    except Exception:
+                        t = k
+                    gap = abs((t - k).total_seconds())
+                    if best is None or gap < best[0]:
+                        best = (gap, comp, cs, nm, t, path, sw)
+    if not best:
+        return None
+    _, comp, cs, nm, t, path, sw = best
+    stt = ((comp.get("status") or {}).get("type") or {})
+    if not stt.get("completed"):
+        return {"_t1": nm[0], "_t2": nm[1], "Eps": "NS", "_sport": "mma", "_league": f"ESPN {path}", "_start": t,
+                "_swapped": sw}
+    w = [bool(x.get("winner")) for x in cs]
+    if not any(w):
+        return {"_t1": nm[0], "_t2": nm[1], "Tr1": 0, "Tr2": 0, "Eps": "FT", "_sport": "mma",
+                "_league": f"ESPN {path} (lygiosios / be sprendimo)", "_start": t, "Ewt": 3, "_swapped": sw}
+    return {"_t1": nm[0], "_t2": nm[1], "Tr1": 1 if w[0] else 0, "Tr2": 1 if w[1] else 0, "Eps": "FT",
+            "_sport": "mma", "_league": f"ESPN {path}", "_start": t, "Ewt": 1 if w[0] else 2, "_swapped": sw}
