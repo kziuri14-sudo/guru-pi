@@ -393,48 +393,88 @@ def _apply_players(leg, t, players, keys, line, side, src, labels):
 
 
 # ---------------------------------------------------------------- futbolo kampiniai / kortelės / smūgiai
+ESPN_STAT = {"corners": "woncorners", "yellow": "yellowcards", "red": "redcards", "shots": "totalshots",
+             "sot": "shotsontarget", "fouls": "foulscommitted", "offsides": "offsides", "saves": "saves"}
+MORE_RE = re.compile(r"\b(daugiau|more|most)\b.*\b(kortel\w*|cards?|kampin\w*|corners?|smugi\w*|shots?)\b"
+                     r"|\b(gaus|turės|tures|will have|will get)\b.*\bdaugiau\b")
+
+
+def _soccer_stats(leg):
+    """(namų statistika, svečių statistika, šaltinis, pavadinimai) – ESPN, o jei nėra – 365Scores."""
+    path, ev = _espn_game(leg, [f"soccer/{x}" for x in SOCCER])
+    if ev and ((ev.get("competitions") or [{}])[0].get("status") or {}).get("type", {}).get("state") == "post":
+        su = _get(f"{ESPN}/{path}/summary?event={ev['id']}", ttl=86400)
+        teams = (su.get("boxscore") or {}).get("teams") or []
+        if len(teams) == 2:
+            res = []
+            for x in teams:
+                stx = {s.get("name", "").lower(): s.get("displayValue") for s in x.get("statistics") or []}
+                res.append({k: float(stx[v] or 0) for k, v in ESPN_STAT.items() if v in stx and
+                            str(stx[v] or "0").replace(".", "").isdigit()})
+            names = [((x.get("team") or {}).get("displayName") or "") for x in teams]
+            home_first = str((teams[0] or {}).get("homeAway") or "home") == "home"
+            h, a = (res[0], res[1]) if home_first else (res[1], res[0])
+            hn, an = (names[0], names[1]) if home_first else (names[1], names[0])
+            sw = (R.mscore(leg.get("home"), an) + R.mscore(leg.get("away"), hn)) > \
+                (R.mscore(leg.get("home"), hn) + R.mscore(leg.get("away"), an))
+            if h and a and any(h.values()):
+                return (a, h, "ESPN", (an, hn)) if sw else (h, a, "ESPN", (hn, an))
+    r = _s365_team_stats(leg)
+    if r == "notyet":
+        return "notyet"
+    if r:
+        h, a, sw, nm = r
+        return (a, h, "365Scores", (nm[1], nm[0])) if sw else (h, a, "365Scores", nm)
+    return None
+
+
 def _soccer_bet(leg):
     t = _fold(f"{leg.get('pick')} {leg.get('market') or ''}")
     if re.search(r"\b(1st|2nd|first|second|pirm\w*|antr\w*) (half|kelin\w*)|\b1h\b|\b2h\b|\bht\b", t):
         return None, None, "kėlinio statistika – neskaičiuojam"
-    line, side = _line(leg, leg.get("pick") or "")
-    if line is None or side is None:
-        return None, None, "nėra linijos"
-    path, ev = _espn_game(leg, [f"soccer/{x}" for x in SOCCER])
-    if not ev:
-        return None, None, "rungtynės ESPN nerastos"
-    if ((ev.get("competitions") or [{}])[0].get("status") or {}).get("type", {}).get("state") != "post":
-        return None, None, "rungtynės dar nesibaigė"
-    su = _get(f"{ESPN}/{path}/summary?event={ev['id']}", ttl=86400)
-    teams = (su.get("boxscore") or {}).get("teams") or []
-    if len(teams) != 2:
-        return None, None, "nėra komandų statistikos"
-    team = leg.get("team")
-    if team and _fold(team) not in ("total", "over", "under") and R.same(team, leg.get("pick") or ""):
-        teams = [x for x in teams if _team_ok(team, [(x.get("team") or {}).get(k) for k in
-                                                     ("displayName", "shortDisplayName", "name")])]
-        if len(teams) != 1:
-            return None, None, f"nerasta {team} statistika"
     if CORNER_RE.search(t):
-        keys, lab = ["woncorners"], "kampinių"
+        keys, lab = ["corners"], "kampinių"
     elif CARD_RE.search(t):
-        keys, lab = ["yellowcards", "redcards"], "kortelių"
+        keys, lab = (["yellow"], "geltonų kortelių") if re.search(r"geltonu|yellow", t) else (["yellow", "red"], "kortelių")
     elif SHOT_RE.search(t):
-        keys, lab = ["shotsontarget"], "smūgių į vartus"
+        keys, lab = ["sot"], "smūgių į vartus"
     elif SHOTS_RE.search(t):
-        keys, lab = ["totalshots"], "smūgių"
+        keys, lab = ["shots"], "smūgių"
     else:
         return None, None, "nežinoma rinka"
-    total = 0.0
-    for x in teams:
-        st = {s.get("name", "").lower(): s.get("displayValue") for s in x.get("statistics") or []}
-        for k in keys:
-            if k not in st:
-                return None, None, f"nėra {lab} statistikos"
-            total += float(st[k] or 0)
-    who = f"{team} " if len(teams) == 1 else ""
+    line, side = _line(leg, leg.get("pick") or "")
+    cmp_ = line is None and MORE_RE.search(t)
+    if (line is None or side is None) and not cmp_:
+        return None, None, "nėra linijos"
+    r = _soccer_stats(leg)
+    if r == "notyet":
+        return None, None, "rungtynės dar nesibaigė"
+    if not r:
+        return None, None, f"nėra {lab} statistikos"
+    hs_, as_, src, (hn, an) = r
+    if any(k not in hs_ or k not in as_ for k in keys):
+        return None, None, f"nėra {lab} statistikos"
+    hv, av = sum(hs_[k] for k in keys), sum(as_[k] for k in keys)
+    team = leg.get("team") or ""
+    if not team or _fold(team) in ("total", "over", "under"):
+        team = leg.get("home") if R.same(leg.get("home") or "", leg.get("pick") or "") and \
+            not R.same(leg.get("away") or "", leg.get("pick") or "") else \
+            leg.get("away") if R.same(leg.get("away") or "", leg.get("pick") or "") else ""
+    mine = None
+    if team:
+        mine = "h" if R.mscore(team, leg.get("home")) >= R.mscore(team, leg.get("away") or "") else "a"
+    if cmp_:                                              # „Gibraltar gaus daugiau geltonų kortelių“
+        if not mine:
+            return None, None, "neaišku, kuri komanda"
+        my, ot = (hv, av) if mine == "h" else (av, hv)
+        res = "push" if my == ot else ("won" if my > ot else "lost")
+        return res, f"{lab}: {leg.get('home')} {hv:g} – {av:g} {leg.get('away')} – {src}", "ok"
+    single = mine and R.same(team, leg.get("pick") or "")
+    total = (hv if mine == "h" else av) if single else hv + av
+    who = f"{team} " if single else ""
     res = "push" if total == line else ("won" if (total > line) == (side == "Over") else "lost")
-    return res, f"{who}{lab}: {total:g} ({'daugiau' if side == 'Over' else 'mažiau'} {line:g}) – ESPN", "ok"
+    return res, f"{who}{lab}: {total:g} – statymas „{'daugiau' if side == 'Over' else 'mažiau'} nei {line:g}“ " \
+                f"({leg.get('home')} {hv:g} – {av:g} {leg.get('away')}) – {src}", "ok"
 
 
 def is_prop(leg):
@@ -998,15 +1038,38 @@ S365 = ("https://webws.365scores.com/web/games/allscores/?appTypeId=5&langId=1&t
 S365_STATE = {"off_until": 0, "last": ""}
 
 
-def s365_event(leg):
-    if _sp(leg) not in (None, "soccer") or time.time() < S365_STATE["off_until"]:
+S365_SPORT = {"soccer": 1, "basketball": 2, "tennis": 3, "hockey": 4, "handball": 5, "american_football": 6,
+              "baseball": 7, "volleyball": 8}
+S365_GAME = "https://webws.365scores.com/web/game/?appTypeId=5&langId=1&timezoneName=Europe/Vilnius&gameId={gid}"
+S365_STATS = "https://webws.365scores.com/web/game/stats/?appTypeId=5&langId=1&timezoneName=Europe/Vilnius&games={gid}"
+
+
+def _s365_sport(leg):
+    sp = _sp(leg)
+    if sp:
+        return sp
+    t = _fold(f"{leg.get('sport')} {leg.get('league')}")
+    for k, rx in (("tennis", r"tenis|tennis|atp|wta|itf"), ("handball", r"handbal|rankin"),
+                  ("volleyball", r"volley|tinklin")):
+        if re.search(rx, t):
+            return k
+    return "soccer"
+
+
+def _s365_find(leg):
+    """365Scores rungtynės pagal datą ir komandas (visos sporto šakos). (žaidimas, laikas, sporto šaka) arba None."""
+    if time.time() < S365_STATE["off_until"]:
+        return None
+    sp = _s365_sport(leg)
+    sid = S365_SPORT.get(sp)
+    if not sid:
         return None
     k, c = _when(leg)
     best = None
     for d in (k.date(), k.date() - timedelta(days=1), k.date() + timedelta(days=1)):
         old = d < (datetime.now() - timedelta(days=2)).date()
         try:
-            data = _get(S365.format(d=d), ttl=7 * 86400 if old else 600)
+            data = _get(S365.format(d=d).replace("&sports=1", f"&sports={sid}"), ttl=7 * 86400 if old else 600)
         except urllib.error.HTTPError as e:
             S365_STATE["last"] = f"HTTP {e.code}"
             if e.code in (401, 403, 429):
@@ -1031,28 +1094,92 @@ def s365_event(leg):
             gap = abs((t - k).total_seconds())
             if best is None or gap < best[0]:
                 best = (gap, g, t)
-    if not best:
+    return (best[1], best[2], sp) if best else None
+
+
+def s365_event(leg):
+    """365Scores rezultatas LiveScore formatu – futbolas, krepšinis (kėliniai), ledo ritulys (periodai), tenisas ir kt."""
+    f = _s365_find(leg)
+    if not f:
         return None
-    _, g, t = best
+    g, t, sp = f
     txt = str(g.get("statusText") or "").lower()
-    if "ended" in txt or txt in ("ft", "final"):
+    if "ended" in txt or txt in ("ft", "final") or "final" in txt or "after" in txt:
         eps = "FT"
     elif "postp" in txt or "cancel" in txt or "abandon" in txt:
         eps = "POSTP."
-    elif "penalt" in txt or "extra" in txt or "aet" in txt:
-        return None                                       # be 90 min. rezultato
     else:
         eps = "NS"
     hs, as_ = (g.get("homeCompetitor") or {}).get("score"), (g.get("awayCompetitor") or {}).get("score")
     e = {"_t1": (g.get("homeCompetitor") or {}).get("name"), "_t2": (g.get("awayCompetitor") or {}).get("name"),
          "Tr1": None if hs is None or hs < 0 else int(hs), "Tr2": None if as_ is None or as_ < 0 else int(as_),
-         "Eps": eps, "_sport": "soccer", "_league": "365Scores, " + str(g.get("competitionDisplayName") or ""),
-         "_start": t}
+         "Eps": eps, "_sport": sp, "_league": "365Scores, " + str(g.get("competitionDisplayName") or ""),
+         "_start": t, "_g365": g.get("id")}
+    if eps == "FT":
+        try:                                              # kėliniai / periodai / setai / kėlinių rezultatai
+            gd = (_get(S365_GAME.format(gid=g["id"]), ttl=86400) or {}).get("game") or {}
+        except Exception:
+            gd = {}
+        reg = None
+        for stg in gd.get("stages") or []:
+            nm = str(stg.get("shortName") or stg.get("name") or "").upper()
+            x, y = stg.get("homeCompetitorScore"), stg.get("awayCompetitorScore")
+            if x is None or y is None or x < 0 or y < 0:
+                continue
+            m = re.fullmatch(r"(Q|P|S|SET ?)(\d)", nm)
+            if m and sp == "basketball" and m.group(1) == "Q":
+                e[f"Tr1Q{m.group(2)}"], e[f"Tr2Q{m.group(2)}"] = x, y
+            elif m and sp == "hockey" and m.group(1) == "P":
+                e[f"Tr1Pe{m.group(2)}"], e[f"Tr2Pe{m.group(2)}"] = x, y
+            elif m and sp in ("tennis", "volleyball"):
+                e[f"Tr1S{m.group(2)}"], e[f"Tr2S{m.group(2)}"] = x, y
+            elif sp == "soccer" and nm in ("HT", "1ST HALF", "FIRST HALF", "H1"):
+                e["Trh1"], e["Trh2"] = x, y
+            elif nm in ("OT", "ET", "AET", "PEN", "PENALTIES", "SO"):
+                e["Eps"] = "AET" if nm in ("OT", "ET", "AET") else "AP"
+                if sp == "soccer":
+                    return None                           # be 90 min. rezultato – geriau kiti šaltiniai
+            elif nm in ("REG", "90", "FT") and sp != "soccer":
+                reg = (x, y)
+        if sp == "hockey" and all(f"Tr1Pe{n}" in e for n in (1, 2, 3)):
+            e["Tr1OR"] = sum(e[f"Tr1Pe{n}"] for n in (1, 2, 3))
+            e["Tr2OR"] = sum(e[f"Tr2Pe{n}"] for n in (1, 2, 3))
     if e["Tr1"] is not None and e["Tr2"] is not None:
         e["Ewt"] = 1 if e["Tr1"] > e["Tr2"] else 2 if e["Tr2"] > e["Tr1"] else None
     h, a = leg.get("home"), leg.get("away")
     e["_swapped"] = (R.mscore(h, e["_t2"]) + R.mscore(a, e["_t1"])) > (R.mscore(h, e["_t1"]) + R.mscore(a, e["_t2"]))
     return e
+
+
+S365_STAT = {"corners": ("Corners",), "yellow": ("Yellow Cards",), "red": ("Red Cards",), "shots": ("Total Shots",),
+             "sot": ("Shots On Target",), "fouls": ("Fouls",), "offsides": ("Offsides",), "saves": ("Goalkeeper Saves",)}
+
+
+def _s365_team_stats(leg):
+    """Futbolo komandų statistika iš 365Scores: ({namų}, {svečių}, apversta, pavadinimai) arba None."""
+    f = _s365_find(dict(leg, sport="soccer"))
+    if not f:
+        return None
+    g, t, sp = f
+    if "ended" not in str(g.get("statusText") or "").lower() and "final" not in str(g.get("statusText") or "").lower():
+        return "notyet"
+    st = _get(S365_STATS.format(gid=g["id"]), ttl=86400) or {}
+    hid, aid = (g.get("homeCompetitor") or {}).get("id"), (g.get("awayCompetitor") or {}).get("id")
+    out = {hid: {}, aid: {}}
+    for x in st.get("statistics") or []:
+        cid = x.get("competitorId")
+        if cid not in out:
+            continue
+        for k, names in S365_STAT.items():
+            if x.get("name") in names:
+                try:
+                    out[cid][k] = float(str(x.get("value")).split("/")[0].strip().rstrip("%"))
+                except Exception:
+                    pass
+    hn, an = (g.get("homeCompetitor") or {}).get("name"), (g.get("awayCompetitor") or {}).get("name")
+    sw = (R.mscore(leg.get("home"), an) + R.mscore(leg.get("away"), hn)) > \
+        (R.mscore(leg.get("home"), hn) + R.mscore(leg.get("away"), an))
+    return out[hid], out[aid], sw, (hn, an)
 
 
 # ---------------------------------------------------------------- SportScore – viešas API (TheSports duomenys), labai plati aprėptis

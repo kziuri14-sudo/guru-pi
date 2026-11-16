@@ -664,6 +664,21 @@ def _settle(b):
             if res is not None:
                 return res, f"{detail} ({e2['_league']}; LiveScore neatnaujino)", "ok"
     res, detail = evaluate(b, e)
+    if res is None and re.search(r"nėra (q\d|h\d|s\d) rezultato", detail or ""):
+        try:                                        # LiveScore neturi kėlinių / periodų – kiti šaltiniai (365Scores ir kt.)
+            import props
+            for name, fn in SOURCES:
+                f = getattr(props, fn, None)
+                try:
+                    e2 = f(b) if f else None
+                except Exception:
+                    e2 = None
+                if e2 and state(e2) == "done":
+                    r2, d2 = evaluate(b, e2)
+                    if r2 is not None:
+                        return r2, f"{d2} ({e2['_league']})", "ok"
+        except Exception:
+            pass
     if res is None:
         return None, None, detail
     ok = None

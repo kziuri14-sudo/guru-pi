@@ -17,6 +17,7 @@ import results as R
 import props as P
 
 FX = json.loads('{"nhl_score": {"games": [{"id": 2026020326, "startTimeUTC": "2026-11-16T00:30:00Z", "gameState": "OFF", "homeTeam": {"name": {"default": "Flyers"}, "abbrev": "PHI", "score": 2}, "awayTeam": {"name": {"default": "Oilers"}, "abbrev": "EDM", "score": 5}, "gameOutcome": {"lastPeriodType": "REG"}, "goals": [{"period": 1, "periodDescriptor": {"periodType": "REG"}, "teamAbbrev": "EDM"}, {"period": 1, "periodDescriptor": {"periodType": "REG"}, "teamAbbrev": "EDM"}, {"period": 1, "periodDescriptor": {"periodType": "REG"}, "teamAbbrev": "EDM"}, {"period": 2, "periodDescriptor": {"periodType": "REG"}, "teamAbbrev": "PHI"}, {"period": 2, "periodDescriptor": {"periodType": "REG"}, "teamAbbrev": "PHI"}, {"period": 3, "periodDescriptor": {"periodType": "REG"}, "teamAbbrev": "EDM"}, {"period": 3, "periodDescriptor": {"periodType": "REG"}, "teamAbbrev": "EDM"}]}]}, "nhl_box": {"gameState": "OFF", "playerByGameStats": {"homeTeam": {"forwards": [{"name": {"default": "T. Konecny"}, "goals": 0, "assists": 0, "points": 0, "sog": 6, "hits": 0, "blockedShots": 0, "toi": "18:00"}], "defense": [], "goalies": [{"name": {"default": "D. Vladar"}, "saves": 16, "toi": "58:15"}]}, "awayTeam": {"forwards": [{"name": {"default": "L. Draisaitl"}, "goals": 2, "assists": 1, "points": 3, "sog": 3, "hits": 0, "blockedShots": 0, "toi": "18:00"}, {"name": {"default": "C. McDavid"}, "goals": 1, "assists": 2, "points": 3, "sog": 4, "hits": 0, "blockedShots": 0, "toi": "18:00"}], "defense": [], "goalies": [{"name": {"default": "T. Jarry"}, "saves": 34, "toi": "60:00"}]}}}, "lkl_box": {"gameStatistics": {"3": {"updated_at": "2026-11-15T16:55:12.000000Z", "points": 87}, "5": {"updated_at": "2026-11-15T16:55:12.000000Z", "points": 82}}, "boxscore": {"home": {"players": [{"slug": "deividas-sirvydis", "name": {"value": "D. Sirvydis"}, "time": {"value": "20:31"}, "points": {"value": 12}, "total_rebounds": {"value": 2}, "assists": {"value": 1}, "steals": {"value": 0}, "blocks": {"value": 0}, "fg3": {"value": "1/5"}}, {"slug": "marek-blazevic", "name": {"value": "M. Blaževič"}, "time": {"value": "13:52"}, "points": {"value": 6}, "total_rebounds": {"value": 4}, "assists": {"value": 1}, "steals": {"value": 0}, "blocks": {"value": 0}, "fg3": {"value": "0/0"}}, {"slug": "majus-bulanovas", "name": {"value": "M. Bulanovas"}, "time": {"value": "00:00"}, "points": {"value": 0}, "total_rebounds": {"value": 0}, "assists": {"value": 1}, "steals": {"value": 0}, "blocks": {"value": 0}, "fg3": {"value": "0/0"}}]}, "away": {"players": [{"slug": "martynas-echodas", "name": {"value": "M. Echodas"}, "time": {"value": "27:35"}, "points": {"value": 7}, "total_rebounds": {"value": 9}, "assists": {"value": 1}, "steals": {"value": 0}, "blocks": {"value": 0}, "fg3": {"value": "0/0"}}]}}}, "ls_hockey": {"Eid": "1835377", "Tr1": "1", "Tr2": "4", "Tr1OR": "1", "Tr2OR": "4", "Tr1Pe1": "0", "Tr2Pe1": "2", "Tr1Pe2": "1", "Tr2Pe2": "0", "Tr1Pe3": "0", "Tr2Pe3": "2", "T1": [{"Nm": "Montreal Canadiens"}], "T2": [{"Nm": "Colorado Avalanche"}], "Eps": "FT", "Ewt": 2, "Esd": 20261115020000}}')
+FX.update(json.loads('{"s365_soc": {"games": [{"id": 4891453, "startTime": "2026-11-13T17:00:00+02:00", "statusText": "Ended", "competitionDisplayName": "Friendly International", "homeCompetitor": {"id": 5078, "name": "Iraq", "score": 0}, "awayCompetitor": {"id": 5088, "name": "Lebanon", "score": 0}}, {"id": 4697788, "startTime": "2026-11-13T21:45:00+02:00", "statusText": "Ended", "competitionDisplayName": "UEFA Nations League - League D - Group 1", "homeCompetitor": {"id": 5052, "name": "Andorra", "score": 2}, "awayCompetitor": {"id": 12775, "name": "Gibraltar", "score": 0}}]}, "s365_stats": {"statistics": [{"name": "Total Shots", "competitorId": 5052, "value": "8"}, {"name": "Shots On Target", "competitorId": 5052, "value": "3"}, {"name": "Corners", "competitorId": 5052, "value": "3"}, {"name": "Red Cards", "competitorId": 5052, "value": "0"}, {"name": "Yellow Cards", "competitorId": 5052, "value": "2"}, {"name": "Total Shots", "competitorId": 12775, "value": "8"}, {"name": "Shots On Target", "competitorId": 12775, "value": "1"}, {"name": "Corners", "competitorId": 12775, "value": "2"}, {"name": "Red Cards", "competitorId": 12775, "value": "0"}, {"name": "Yellow Cards", "competitorId": 12775, "value": "5"}]}, "s365_bas": {"games": [{"id": 4810395, "startTime": "2026-11-14T17:00:00+02:00", "statusText": "Final", "competitionDisplayName": "Super Ligi", "homeCompetitor": {"id": 54405, "name": "Manisa Basket", "score": 82}, "awayCompetitor": {"id": 972, "name": "Galatasaray", "score": 81}}]}, "s365_bas_game": {"game": {"stages": [{"shortName": "Q1", "homeCompetitorScore": 20, "awayCompetitorScore": 14}, {"shortName": "Q2", "homeCompetitorScore": 24, "awayCompetitorScore": 23}, {"shortName": "Q3", "homeCompetitorScore": 26, "awayCompetitorScore": 23}, {"shortName": "Q4", "homeCompetitorScore": 12, "awayCompetitorScore": 21}, {"shortName": "Score", "homeCompetitorScore": 82, "awayCompetitorScore": 81}]}}}'))
 TESTS = []
 
 
@@ -251,6 +252,38 @@ def mma_fighter_order():
         assert st(R.evaluate(dict(leg, team="Josh Hokit", pick="Josh Hokit"), e)) == "lost"
     finally:
         P._get = og
+
+
+def _mock365(url, ttl=0):
+    if "allscores" in url and "sports=1" in url and "13/11/2026" in url:
+        return FX["s365_soc"]
+    if "allscores" in url and "sports=2" in url and "14/11/2026" in url:
+        return FX["s365_bas"]
+    if "/game/stats/" in url:
+        return FX["s365_stats"]
+    if "/web/game/" in url:
+        return FX["s365_bas_game"]
+    return {"games": []}
+
+
+@test
+def s365_cards_corners_and_quarters():
+    og, oe = P._get, P._espn_game
+    P._get, P._espn_game = _mock365, (lambda leg, paths: (None, None))
+    try:
+        base = {"home": "Andorra", "away": "Gibraltar", "sport": "soccer", "kickoff": "2026-11-13T21:45",
+                "created": "2026-11-13T14:35"}
+        r = P._settle(dict(base, pick="Gibraltar gaus daugiau geltonų kortelių", team="Gibraltar"))
+        assert st(r) == "won" and "2 – 5" in r[1], r                     # geltonos 2 – 5
+        assert st(P._settle(dict(base, pick="Over 4.5 corners", side="Over", line=4.5))) == "won"   # 3 + 2
+        assert st(P._settle(dict(base, pick="Andorra over 3.5 corners", side="Over", line=3.5, team="Andorra"))) == "lost"
+        leg = {"home": "Manisa", "away": "Galatasaray", "sport": "basketball", "kickoff": "2026-11-14T17:00",
+               "created": "2026-11-14T11:31"}
+        e = P.s365_event(leg)
+        assert e and (e["Tr1Q2"], e["Tr2Q2"]) == (24, 23) and e["Tr2"] == 81, e
+        assert st(R.evaluate(dict(leg, pick="Manisa 2 kelinys - nugalėtojas", side="Win", team="Manisa"), e)) == "won"
+    finally:
+        P._get, P._espn_game = og, oe
 
 
 @test
