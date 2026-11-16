@@ -169,6 +169,8 @@ function betHtml(b,open){const t=new Date(b.t);const when=t.toLocaleString('lt',
   return `<div class="bet${open?' open':''}" onclick="this.classList.toggle('open')"><div class="top"><div class="who">${esc(N(b.chat))}${b.who?' · '+esc(b.who):''} · ${when}</div><span class="chip c-${b.status}">${stLabel(b)}</span></div>
   ${b.legs.map(l=>`<div class="leg"><b>${esc(l.m)}</b> <span class="pk">· ${esc(l.pick)}</span></div>`).join('')}
   <div class="sub">${b.odds?`grupės koef. ${esc(b.odds)}`:''}${b.mkt&&b.mkt.odds?`${b.odds?' · ':''}<b style="color:var(--acc)">bukmekeriai ${esc(b.mkt.odds)}</b>`:b.mkt&&b.mkt.none?`${b.odds?' · ':''}nepastatoma: ${esc(b.mkt.none)}`:b.mkt===null?`${b.odds?' · ':''}nepastatoma: paskelbta po pradžios`:''}</div>
+  ${b.bg?`<div class="sub">📌 rezultatas pagal grupės žymę „${esc(b.gm&&b.gm.line)}“ – savo šaltiniuose nerasta</div>`:
+    b.gm&&['won','lost','push'].includes(b.status)&&b.gm.st!==b.status?`<div class="sub" style="color:var(--warn)">⚠ grupė pažymėjo kitaip: „${esc(b.gm.line)}“ (mūsų patikrinimu – ${ST_TXT[b.status].toLowerCase()})</div>`:''}
   <div class="det">${b.legs.map(l=>esc(l.d||'–')).join('<br>')}</div></div>`}
 function leaderSet(){const L=(D.audit&&D.audit.leaders)||{};return L[PER]||{}}
 function renderHome(){const a=D.audit||{};const s=PER==='today'?a.today_total:PER==='bet'?a.bet_total:a.total;

@@ -51,6 +51,34 @@ Lygiosios = side "Win", team "Draw". „Abi įmuš“ = BTTS (pick „Yes“/„
 Komandas rašyk angliškai. NIEKO NESUGALVOK – ko nėra, rašyk null."""
 
 
+MARK_LOSS = re.compile(r"(?i)❌|✖|✗|🔴|❎|\blos[ets]\b|pralaim|neįėjo|nepraėjo|\bminus\b")
+MARK_WIN = re.compile(r"(?i)✅|✔|☑|🟢|✓|\bwin\b|\bwon\b|laimėj|įėjo|praėjo|\bcash\b")
+MARK_PUSH = re.compile(r"(?i)↩|🔄|grąžin|\bvoid\b|\bpush\b|refund")
+
+
+def _mark(text, whole=False):
+    """Grupės pažymėtas rezultatas (✅ / ✖️ 82-81 / grąžinta) – paskutinėje ar pirmoje trumpoje eilutėje.
+    whole=True – visa žinutė trumpa (atsakymas į statymą)."""
+    lines = [x.strip() for x in str(text or "").splitlines() if x.strip()]
+    if not lines:
+        return None
+    cand = lines if whole else lines[-2:][::-1] + lines[:1]
+    for ln in cand:
+        if len(ln) > (60 if whole else 30):
+            continue
+        w, l, p = bool(MARK_WIN.search(ln)), bool(MARK_LOSS.search(ln)), bool(MARK_PUSH.search(ln))
+        if w + l + p != 1:
+            continue
+        rest = re.sub(r"[^\w\s]|\d|_", " ", ln.lower()).split()  # be žymių ir skaičių – tik rezultato žodžiai
+        if any(not re.fullmatch(r"win|won|lose|lost|loss|laimėj\w*|laimėta|pralaim\w*|grąžin\w*|void|push|refund|deja|"
+                                r"ft|final|rez\w*|cash|ok|praėjo|įėjo|neįėjo|nepraėjo|minus|plius|vnt|u|units?|ot|"
+                                r"po|pratęsimo|x|w|l", x) for x in rest):
+            continue
+        sc = re.search(r"\d{1,3}\s*[-:]\s*\d{1,3}", ln)
+        return {"st": "won" if w else "lost" if l else "push", "line": ln[:40], "score": sc.group(0) if sc else None}
+    return None
+
+
 def _n(x):
     return re.sub(r"\W+", "", unicodedata.normalize("NFKC", str(x or "")).lower())
 
@@ -594,6 +622,81 @@ class Auditor:
         self.save(True)
 
     # ------------------------------------------------------------------ 2) VISOS žinutės į eilę (iki N dienų atgal)
+    def _reply_mark(self, m, cid):
+        """Atsakymas į statymo žinutę su „✅“ / „❌ 82-81“ – grupės pažymėtas rezultatas."""
+        try:
+            rid = getattr(m, "reply_to_msg_id", None)
+            if not rid:
+                return
+            mk = _mark(m.message or "", whole=True)
+            if mk:
+                mk["how"], mk["t"] = "atsakymas", m.date.astimezone().isoformat(timespec="minutes")
+                self.d.setdefault("marks", {})[f"{cid}:{rid}"] = mk
+        except Exception:
+            pass
+
+    async def recheck_marks(self, limit=120):
+        """Grupės dažnai paredaguoja statymo žinutę (prideda ✅/✖️ ir rezultatą) – perskaitom neišspręstus statymus."""
+        now = datetime.now()
+        marks = self.d.setdefault("marks", {})
+        want = {}
+        for b in self.d["bets"]:
+            if b["status"] not in ("pending", "unknown") or f"{b['c']}:{b['mid']}" in marks:
+                continue
+            try:
+                t = datetime.fromisoformat(str(b["t"])[:16])
+            except Exception:
+                continue
+            if not (now - timedelta(days=5) <= t <= now - timedelta(hours=2)) or b.get("mk_next", 0) > time.time():
+                continue
+            b["mk_next"] = time.time() + 1200
+            want.setdefault(b["c"], []).append(b["mid"])
+            if sum(len(v) for v in want.values()) >= limit:
+                break
+        for cid, ids in want.items():
+            try:
+                msgs = await self.client.get_messages(int(cid), ids=ids[:100])
+            except Exception as e:
+                self._err(f"žymės: {type(e).__name__}")
+                continue
+            for m in msgs or []:
+                if not m or not getattr(m, "edit_date", None) or m.edit_date - m.date < timedelta(minutes=45):
+                    continue                              # paredaguota vėliau (po rungtynių), ne iškart po paskelbimo
+                mk = _mark(m.message or "")
+                if mk:
+                    mk["how"], mk["t"] = "paredaguota", m.edit_date.astimezone().isoformat(timespec="minutes")
+                    marks[f"{cid}:{m.id}"] = mk
+        self.apply_marks()
+
+    def apply_marks(self):
+        """Kai mūsų šaltiniai rezultato nerado – imam grupės pažymėtą (✅/✖️). Jei rado – tik palyginam."""
+        marks = self.d.get("marks") or {}
+        now = datetime.now()
+        for b in self.d["bets"]:
+            mk = marks.get(f"{b['c']}:{b['mid']}")
+            if not mk:
+                continue
+            b["grp_mark"] = mk
+            if b["status"] not in ("pending", "unknown"):
+                continue
+            if any("ne prognozė" in (l.get("detail") or "") for l in b["legs"]):
+                continue                                  # paskelbta po rungtynių – neįskaitom ir su žyme
+            try:
+                k = max(self._kick(l, b) for l in b["legs"])
+            except Exception:
+                k = now
+            if k + timedelta(hours=2, minutes=30) > now:
+                continue                                  # rungtynės dar galėjo vykti – laukiam savo šaltinių
+            if b["status"] == "pending" and b.get("tries", 0) < 2 and k + timedelta(hours=8) > now:
+                continue                                  # duodam savo šaltiniams pabandyti
+            b["status"], b["by_group"] = mk["st"], True
+            note = f"grupė pažymėjo „{mk['line']}“ ({mk['how']} {str(mk.get('t'))[5:16].replace('T', ' ')}) – " \
+                   "mūsų šaltiniai rezultato nerado"
+            for l in b["legs"]:
+                if l.get("status") in (None, "pending", "unknown"):
+                    l["status"], l["detail"] = mk["st"] if len(b["legs"]) == 1 else l.get("status"), note
+                    l.pop("note", None)
+
     def _keep(self, m, cid):
         t = (m.message or "").strip()
         if not m.photo and len(t) < 4:                  # lipdukai, „ok“, tuščios
@@ -633,6 +736,7 @@ class Auditor:
                 if last and self.d["bf_done"].get(cid, 0) >= self.days:       # naujos žinutės nuo paskutinės
                     async for m in self.client.iter_messages(int(cid), min_id=last, reverse=True, limit=per_chat):
                         self.d["last_id"][cid] = max(int(self.d["last_id"].get(cid, 0)), m.id)
+                        self._reply_mark(m, cid)
                         q = self._keep(m, cid)
                         if q:
                             new.append(q)
@@ -647,6 +751,7 @@ class Auditor:
                             reached = True
                             break
                         self.d["oldest"][cid] = m.id
+                        self._reply_mark(m, cid)
                         q = self._keep(m, cid)
                         if q:
                             new.append(q)
@@ -1342,7 +1447,7 @@ Jei tekste atsakymo nėra – {{"found": false}}.
         for b in sorted(bets, key=lambda x: x["t"], reverse=True)[:400]:
             recent.append({"t": b["t"], "c": b["c"], "chat": chats.get(b["c"], b["c"]), "who": b.get("un"),
                            "status": b["status"], "odds": b.get("odds"), "photo": b.get("photo", False),
-                           "mkt": b.get("mkt"),
+                           "mkt": b.get("mkt"), "gm": b.get("grp_mark"), "bg": b.get("by_group", False),
                            "legs": [{"m": f"{l.get('home')} – {l.get('away') or ''}".strip(" –"), "pick": l.get("pick"),
                                      "st": l.get("status"),
                                      "d": (l.get("detail") or (("⏳ " + l["note"]) if l.get("note") else ""))[:110],
@@ -1454,6 +1559,9 @@ Jei tekste atsakymo nėra – {{"found": false}}.
                     await self.collect()
                     last_collect = time.time()
                 await self.analyze_some(5)
+                if time.time() - self.d.get("mk_last", 0) > 900:   # grupių ✅/✖️ žymės – kas 15 min.
+                    self.d["mk_last"] = time.time()
+                    await self.recheck_marks()
                 self.save()
             except Exception as e:
                 self.log.info("audit klaida: %s", e)
