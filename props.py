@@ -141,6 +141,63 @@ def _players_el(stats):
     return out
 
 
+NFL_KEYS = (("rush_yds", r"begimo jard\w*|rushing yards?|rush yds|rushing yds|begim\w* jard"),
+            ("rec_yds", r"priemim\w* jard\w*|receiving yards?|rec yds|receiving yds"),
+            ("pass_yds", r"perdavim\w* jard\w*|passing yards?|pass yds|passing yds"),
+            ("rec", r"\breceptions?\b|priemim\w*(?! jard)|\bcatches\b"),
+            ("rush_att", r"rushing attempts?|carries|begimo bandym\w*"),
+            ("pass_td", r"passing (td|touchdowns?)|perdavim\w* (td|tacdaun\w*)"),
+            ("td", r"anytime (td|touchdown)|touchdown|tacdaun\w*|\btd\b"),
+            ("pass_cmp", r"completions?|tiksl\w* perdavim\w*"),
+            ("int", r"interceptions?|perimim\w*"))
+NFL_LAB = {"rush_yds": "bėgimo jardai", "rec_yds": "priėmimo jardai", "pass_yds": "perdavimo jardai",
+           "rec": "priėmimai", "rush_att": "bėgimo bandymai", "pass_td": "perdavimo TD", "td": "TD",
+           "pass_cmp": "tikslūs perdavimai", "int": "perimti kamuoliai"}
+
+
+def _nfl_keys(text):
+    t = _fold(text)
+    for k, rx in NFL_KEYS:
+        if re.search(rx, t):
+            return [k]
+    return []
+
+
+def _players_nfl(summary):
+    """ESPN NFL/NCAA protokolas → [{first, last, played, v}] (kategorijos sujungiamos pagal žaidėją)."""
+    by = {}
+    col = {"rushing": {"CAR": "rush_att", "YDS": "rush_yds", "TD": "rush_td"},
+           "receiving": {"REC": "rec", "YDS": "rec_yds", "TD": "rec_td"},
+           "passing": {"YDS": "pass_yds", "TD": "pass_td", "INT": "int_thrown", "C/ATT": "pass_cmp"},
+           "defensive": {}, "interceptions": {"INT": "int"}}
+    for team in (summary.get("boxscore") or {}).get("players") or []:
+        for grp in team.get("statistics") or []:
+            cmap = col.get(str(grp.get("name") or "").lower())
+            if cmap is None:
+                continue
+            labels = [x.upper() for x in grp.get("labels") or []]
+            for a in grp.get("athletes") or []:
+                nm = (a.get("athlete") or {}).get("displayName", "")
+                p = by.setdefault(nm, {"v": {}})
+                st = a.get("stats") or []
+                for lab, key in cmap.items():
+                    if lab in labels and len(st) > labels.index(lab):
+                        raw = str(st[labels.index(lab)]).split("/")[0]
+                        try:
+                            p["v"][key] = p["v"].get(key, 0) + float(raw)
+                        except Exception:
+                            pass
+    out = []
+    for nm, p in by.items():
+        v = p["v"]
+        for k in ("rush_yds", "rec_yds", "pass_yds", "rec", "rush_att", "pass_td", "pass_cmp", "int"):
+            v.setdefault(k, 0.0)
+        v["td"] = v.get("rush_td", 0) + v.get("rec_td", 0)
+        parts = [x for x in nm.split() if x.lower().strip(".") not in ("jr", "sr", "ii", "iii", "iv")]
+        out.append({"first": " ".join(parts[:-1]), "last": parts[-1] if parts else "", "played": True, "v": v})
+    return out
+
+
 def _players_espn(summary):
     out = []
     for team in (summary.get("boxscore") or {}).get("players") or []:
@@ -232,8 +289,25 @@ def _player_bet(leg):
     pk = _fold(leg.get("pick"))
     if re.search(r"\b(pergal\w*|laimes|win|winner)\b", pk) and re.search(r"\b(ir|and)\b", pk):
         return None, None, "kombinuotas (pergalė + žaidėjas) – neskaičiuojam"
-    keys = _stat_keys(leg.get("pick") or "")
     line, side = _line(leg, leg.get("pick") or "")
+    sport = _fold(leg.get("sport"))
+    lg = _fold(leg.get("league"))
+    nk = _nfl_keys(leg.get("pick") or "")
+    if nk or "american" in sport or re.search(r"\bnfl\b|ncaaf|college football", lg):
+        if not nk:
+            return None, None, "neaišku, kokia NFL statistika"
+        if nk == ["td"] and line is None:
+            line, side = 0.5, "Over"                     # „anytime touchdown“
+        if line is None or side is None:
+            return None, None, "nėra linijos"
+        path, ev = _espn_game(leg, ["football/nfl", "football/college-football"])
+        if not ev:
+            return None, None, "NFL rungtynės ESPN nerastos"
+        if ((ev.get("competitions") or [{}])[0].get("status") or {}).get("type", {}).get("state") != "post":
+            return None, None, "rungtynės dar nesibaigė"
+        players = _players_nfl(_get(f"{ESPN}/{path}/summary?event={ev['id']}", ttl=86400))
+        return _apply_players(leg, t, players, nk, line, side, "ESPN " + path.split("/")[1].upper(), NFL_LAB)
+    keys = _stat_keys(leg.get("pick") or "")
     if keys is None:
         return None, None, "procentinė statistika – neskaičiuojam"
     if line is None or side is None:
@@ -242,8 +316,6 @@ def _player_bet(leg):
         if line < 7.5:
             return None, None, "neaišku, kokia statistika"
         keys = ["pts"]
-    sport = _fold(leg.get("sport"))
-    lg = _fold(leg.get("league"))
     players, src, done = None, "", False
     if sport in ("basketball", "krepsinis", "") or "basket" in lg:
         if not re.search(r"\b(nba|wnba|ncaa)\b", lg):
@@ -265,6 +337,11 @@ def _player_bet(leg):
                     "ESPN " + path.split("/")[1].upper()
     if players is None:
         return None, None, "rungtynių su žaidėjų statistika nerasta"
+    return _apply_players(leg, t, players, keys, line, side, src, LAB)
+
+
+def _apply_players(leg, t, players, keys, line, side, src, labels):
+    text = " ".join(str(leg.get(x) or "") for x in ("subject", "pick", "team"))
     hits = [(p, _name_hits(text, p["first"], p["last"])) for p in players]
     hits = [x for x in hits if x[1]]
     if not hits:
@@ -287,8 +364,7 @@ def _player_bet(leg):
             if v is None:
                 return None, None, f"nėra {k} statistikos"
             total += float(v)
-    lab = "+".join({"pts": "taškai", "reb": "atkovoti", "ast": "perdavimai", "stl": "perimti", "blk": "blokai",
-                    "3pm": "tritaškiai"}[k] for k in keys)
+    lab = "+".join(labels.get(k, k) for k in keys)
     who = ", ".join(f"{p['first'].title()} {p['last'].title()}".strip() for p in chosen)
     res = "push" if total == line else ("won" if (total > line) == (side == "Over") else "lost")
     return res, f"{who}: {lab} {total:g} ({'daugiau' if side == 'Over' else 'mažiau'} {line:g}) – {src}", "ok"
@@ -350,7 +426,7 @@ def is_prop(leg):
         return True
     if CORNER_RE.search(t) or CARD_RE.search(t) or SHOTS_RE.search(t):
         return True
-    return bool(R.PLAYER_RE.search(t))
+    return bool(R.PLAYER_RE.search(t)) or bool(_nfl_keys(t)) and bool(re.search(r"jard|yard|touchdown|tacdaun|\btd\b|reception|priemim", t))
 
 
 WEB_STAT = None                                   # Raspberry priskiria: statistika iš interneto (Google)
@@ -407,6 +483,44 @@ def settle(leg):
 SCORER_RE = re.compile(r"goal ?scorer|anytime|to score|score a goal|imus ivarti|pelnys ivarti|ivarcio autorius|ives ivarti")
 
 
+_ORD = {"first": 1, "1st": 1, "pirm": 1, "second": 2, "2nd": 2, "antr": 2, "third": 3, "3rd": 3, "trec": 3,
+        "fourth": 4, "4th": 4, "ketvirt": 4, "fifth": 5, "5th": 5, "penkt": 5, "sixth": 6, "6th": 6, "sest": 6}
+
+
+def _team_goal(leg):
+    """„Spain to score 5th goal“, „first goal“, „last goal“ – kuri komanda įmušė N-tąjį įvartį (ESPN įvykių eiga)."""
+    t = _fold(leg.get("pick"))
+    last = bool(re.search(r"\blast goal|paskutin\w* ivart", t))
+    m = re.search(r"\b(\d)(st|nd|rd|th)? (goal|ivart)", t) or \
+        re.search(r"\b(first|second|third|fourth|fifth|sixth|pirm|antr|trec|ketvirt|penkt|sest)\w* (goal|ivart)", t)
+    first = re.search(r"score first|first to score|scores? first|pirm\w* imus|imus pirm", t)
+    if not m and not last and not first:
+        return None, None, "komandos įvarčio rinka (neaišku, kelintas įvartis) – nežinoma rinka"
+    n = None if last else 1 if (first and not m) else int(m.group(1)) if m.group(1).isdigit() else _ORD[m.group(1)]
+    mine = leg.get("home") if R.same(t, leg.get("home")) and not R.same(t, leg.get("away") or "") else leg.get("away")
+    no = bool(re.search(r"\b(no|ne)\s*$", t))
+    path, ev = _espn_game(leg, [f"soccer/{x}" for x in SOCCER])
+    if not ev:
+        return None, None, "rungtynių įvykių eiga nerasta"
+    if ((ev.get("competitions") or [{}])[0].get("status") or {}).get("type", {}).get("state") != "post":
+        return None, None, "rungtynės dar nesibaigė"
+    su = _get(f"{ESPN}/{path}/summary?event={ev['id']}", ttl=86400)
+    if su.get("keyEvents") is None:
+        return None, None, "rungtynių įvykių eiga nerasta"
+    goals = [((k.get("team") or {}).get("displayName") or "") for k in su["keyEvents"] if k.get("scoringPlay")]
+    pen = [k for k in su["keyEvents"] if k.get("scoringPlay") and "shootout" in _fold(((k.get("type") or {}).get("text")))]
+    goals = goals[:len(goals) - len(pen)] if pen else goals
+    if last:
+        if not goals:
+            return ("won" if no else "lost"), "įvarčių nebuvo", "ok"
+        hit = R.same(mine, goals[-1])
+        return ("won" if hit != no else "lost"), f"paskutinį įvartį įmušė {goals[-1]} (ESPN)", "ok"
+    if len(goals) < n:
+        return ("won" if no else "lost"), f"{n}-ojo įvarčio nebuvo – iš viso {len(goals)} (ESPN)", "ok"
+    hit = R.same(mine, goals[n - 1])
+    return ("won" if hit != no else "lost"), f"{n}-ąjį įvartį įmušė {goals[n - 1]} (ESPN, įvarčių eiga: {', '.join(goals)})", "ok"
+
+
 def _scorer(leg):
     """Futbolas: ar žaidėjas įmušė įvartį (ESPN įvykiai; jei nėra – internetas)."""
     who = leg.get("subject") or re.sub(r"(?i)anytime|goal ?scorer|to score|score a goal|\(.*?\)|-|–", " ",
@@ -415,7 +529,7 @@ def _scorer(leg):
     if not toks:
         return None, None, "neaišku, kuris žaidėjas"
     if not leg.get("subject") and any(R.same(who, leg.get(x)) for x in ("home", "away") if leg.get(x)):
-        return None, None, "komandos įvarčio rinka – nežinoma rinka"
+        return _team_goal(leg)
     no = bool(re.search(r"\b(no|ne)\s*$", _fold(leg.get("pick"))))
     path, ev = _espn_game(leg, [f"soccer/{x}" for x in SOCCER])
     if ev:

@@ -514,6 +514,22 @@ class Auditor:
                     if l.get("status") == "pending":
                         l["tries"] = 0
             self.d["settle_ver"] = 17
+        if self.d.get("settle_ver", 0) < 18:          # periodai/kėliniai, N-tasis įvartis, NFL, vienos komandos totalas
+            per = re.compile(r"(?i)period|kėlin|kelin|quarter|ketvirt")
+            for b in self.d["bets"]:
+                redo = b["status"] in ("unknown", "pending") or any(
+                    per.search(str(l.get("pick") or "")) and str(l.get("sport")) in ("hockey", "basketball") for l in b["legs"])
+                if not redo:
+                    continue
+                b["status"], b["tries"], b["next"] = "pending", 0, 0
+                b.pop("mkt", None)
+                for l in b["legs"]:
+                    if l.get("status") in (None, "unknown", "pending") or \
+                            (per.search(str(l.get("pick") or "")) and str(l.get("sport")) in ("hockey", "basketball")):
+                        l["status"], l["detail"] = "pending", None
+                        l.pop("note", None)
+                        l["tries"] = 0
+            self.d["settle_ver"] = 18
         self._keys = {(b["c"], b["mid"]) for b in self.d["bets"]}
         self._done, self._last_save, self._sum = [], 0, (0, None)
         self._ocr = False

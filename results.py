@@ -278,6 +278,11 @@ def state(e):
 
 def _period_text(b):
     t = _fold(f"{b.get('pick')} {b.get('market') or ''}")
+    sp = _fold(b.get("sport"))
+    m = re.search(r"\b([1-4])(st|nd|rd|th)? ?(period\w*|kelin\w*)\b|\b(pirm|antr|trec|ketvirt)\w* (period\w*|kelin\w*)\b", t)
+    if m and (sp in ("hockey", "basketball") or re.search(r"period", t)):
+        n = m.group(1) or {"pirm": "1", "antr": "2", "trec": "3", "ketvirt": "4"}[m.group(4)]
+        return f"q{n}"                                  # ledo ritulio periodas / krepšinio kėlinys (ketvirtis)
     if re.search(r"\b(1st half|first half|1h|1 half|half ?time|ht|pirm\w* kelin\w*|1 kelin\w*|i kelin\w*|"
                  r"pirm\w* puse\w*|1 puse\w*)\b", t):
         return "h1"
@@ -495,6 +500,12 @@ def evaluate(b, e):
             tm = None                                         # komandos totalas: „Team over 1.5“
             if team and _fold(team) not in ("", "total") and same(team, b.get("pick")):
                 tm = mine_home if mine_home is not None else None
+            if tm is None and sp == "basketball" and period == "ft" and 50 <= line < 110:
+                if b.get("team") and mine_home is not None:
+                    tm = mine_home                      # vienos komandos totalas
+                elif not b.get("away"):
+                    tm = True                           # nurodyta tik viena komanda – jos taškai
+                    team = b.get("home")
             if sp == "basketball" and period == "ft" and line < (50 if tm is not None else 110):
                 return None, f"linija {line:g} per maža krepšinio rezultatui – žaidėjo statymas"
             if tm is None:
