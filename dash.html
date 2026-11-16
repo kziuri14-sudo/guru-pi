@@ -214,16 +214,23 @@ function groupedHtml(L,mk,limit){const M=byDay(L);let out='',n=0;for(const [k,ar
   out+=`<div class="card">${dayHead(k,S)}${arr.slice(0,limit-n).map(b=>betHtml(b)).join('')}</div>`;n+=arr.length}return out}
 function dayTableHtml(L,mk,onclick){const M=byDay(L);if(!M.size)return '';let tot=daySum(L,mk);
   return `<h2>Pelnas pagal dienas <span class="sub">${mk?'bukmekerių koef.':'grupių koef.'}</span></h2><table><tr><th>Diena</th><th class="n">W–L</th><th class="n">%</th><th class="n">vnt.</th></tr>`+
-  [...M].map(([k,arr])=>{const S=daySum(arr,mk);return `<tr ${onclick?`style="cursor:pointer" onclick="${onclick}('${k}')"`:''}><td>${shortDay(k)}</td><td class="n">${S.w}–${S.l}</td><td class="n">${S.hit??'–'}${S.hit!=null?' %':''}</td><td class="n ${cls(S.units)}">${u(S.units)}</td></tr>`}).join('')+
+  [...M].map(([k,arr])=>{const S=daySum(arr,mk);return `<tr ${onclick?`style="cursor:pointer" onclick="${onclick}('${k}')"`:''}><td>${shortDay(k)}</td><td class="n">${S.w}–${S.l}${S.pend?` <span class="sub">+${S.pend}</span>`:''}</td><td class="n">${S.hit??'–'}${S.hit!=null?' %':''}</td><td class="n ${cls(S.units)}">${u(S.units)}</td></tr>`}).join('')+
   `<tr><td><b>Iš viso</b></td><td class="n"><b>${tot.w}–${tot.l}</b></td><td class="n"><b>${tot.hit??'–'}${tot.hit!=null?' %':''}</b></td><td class="n ${cls(tot.units)}"><b>${u(tot.units)}</b></td></tr></table>`}
 function shortDay(k){const f=dayLabel(k).split(',')[0];return f==='Šiandien'||f==='Vakar'?f:new Date(k+'T12:00').toLocaleDateString('lt',{month:'2-digit',day:'2-digit'})}
+function groupTableHtml(L,mk,k){const a=D.audit||{};const m=new Map();L.forEach(b=>{if(!m.has(b.c))m.set(b.c,[]);m.get(b.c).push(b)});
+  const rows=[...m].map(([c,arr])=>{const g=(a.groups||[]).find(x=>x.cid===c);return {c,name:N(g?g.chat:(arr[0].chat||c)),S:daySum(arr,mk)}}).sort((x,y)=>y.S.units-x.S.units||y.S.w-x.S.w);
+  const tot=daySum(L,mk);
+  return `<h2>${dayLabel(k)} – pelnas pagal grupes <a onclick="setDay('all')">Visos dienos ✕</a></h2><table><tr><th>Grupė</th><th class="n">W–L</th><th class="n">%</th><th class="n">vnt.</th></tr>`+
+  rows.map(r=>`<tr style="cursor:pointer" onclick="openGroup('${esc(r.c)}')"><td style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.name)}</td><td class="n">${r.S.w}–${r.S.l}${r.S.pend?` <span class="sub">+${r.S.pend}</span>`:''}</td><td class="n">${r.S.hit??'–'}${r.S.hit!=null?' %':''}</td><td class="n ${cls(r.S.units)}">${u(r.S.units)}</td></tr>`).join('')+
+  `<tr><td><b>Iš viso</b></td><td class="n"><b>${tot.w}–${tot.l}</b></td><td class="n"><b>${tot.hit??'–'}${tot.hit!=null?' %':''}</b></td><td class="n ${cls(tot.units)}"><b>${u(tot.units)}</b></td></tr></table>`+
+  (tot.pend?`<div class="sub" style="margin-top:6px">Dar laukia rezultato: ${tot.pend} – pelnas pasikeis, kai rungtynės baigsis.</div>`:'')}
 function setDay(k){DAY=DAY===k?'all':k;render();window.scrollTo(0,0)}
 function renderBets(){const R=(D.audit&&D.audit.recent)||[];const mk=ST==='bet';
   const L0=R.filter(b=>ST==='all'||(mk?(b.mkt&&b.mkt.odds):b.status===ST));
   const days=[...byDay(R).keys()].slice(0,10);
   $('dayChips').innerHTML=`<button data-d="all" aria-pressed="${DAY==='all'}" onclick="setDay('all')">Visos dienos</button>`+days.map(k=>`<button aria-pressed="${DAY===k}" onclick="setDay('${k}')">${shortDay(k)}</button>`).join('');
   const L=L0.filter(b=>DAY==='all'||dk(b)===DAY);
-  $('dayTable').innerHTML=dayTableHtml(L0,mk,'setDay');$('dayTable').style.display=L0.length?'':'none';
+  $('dayTable').innerHTML=DAY==='all'?dayTableHtml(L0,mk,'setDay'):groupTableHtml(L,mk,DAY);$('dayTable').style.display=L0.length?'':'none';
   $('betList').innerHTML=groupedHtml(L,mk,200)||'<div class="card"><div class="empty">Nieko nerasta</div></div>';
   document.querySelectorAll('#betChips button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.st===ST))}
 function openGroup(cid){const a=D.audit||{};const g=(a.groups||[]).find(x=>x.cid===cid);if(!g)return;const s=g;
