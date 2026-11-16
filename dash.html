@@ -115,7 +115,9 @@ th{font-size:12px;color:var(--mut);font-weight:600;border-top:0}td.n,th.n{text-a
 
 <section id="v-statymai">
   <div class="chips" id="betChips"><button data-st="all">Visi</button><button data-st="won">Laimėti</button><button data-st="lost">Pralaimėti</button><button data-st="pending">Laukia</button><button data-st="unknown">Nežinomi</button><button data-st="bet">Galima statyti</button></div>
-  <div class="card" id="betList"></div>
+  <div class="chips" id="dayChips"></div>
+  <div class="card" id="dayTable"></div>
+  <div id="betList"></div>
 </section>
 
 <section id="v-daugiau">
@@ -198,8 +200,31 @@ function renderGroups(){const a=D.audit||{};const gs=(a.groups||[]).map(g=>({g,s
    <div class="s">${s.w||0}–${s.l||0}${s.pend?' · laukia '+s.pend:''} · pataikymas ${pct(s.hit)}${g.late?' · ⚠ '+g.late+' po rungtynių':''}${g.state==='analizuojama'?' · skaitoma':''}</div></div>
    <div class="r ${cls(s.units)}">${u(s.units)}<small>vnt.</small></div></div>`).join('')||'<div class="empty">Šiandien dar nėra statymų</div>';
   document.querySelectorAll('#grpSeg button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.per===GPER))}
-function renderBets(){const R=(D.audit&&D.audit.recent)||[];const L=R.filter(b=>ST==='all'||(ST==='bet'?(b.mkt&&b.mkt.odds):b.status===ST));
-  $('betList').innerHTML=L.slice(0,150).map(b=>betHtml(b)).join('')||'<div class="empty">Nieko nerasta</div>';
+let DAY='all';
+const dk=b=>String(b.t).slice(0,10);
+function dayLabel(k){const d=new Date(k+'T12:00');const t=new Date();const td=t.toLocaleDateString('sv');const y=new Date(t-864e5).toLocaleDateString('sv');
+  const dt=d.toLocaleDateString('lt',{month:'long',day:'numeric'});const wd=d.toLocaleDateString('lt',{weekday:'long'});
+  return k===td?`Šiandien, ${dt}`:k===y?`Vakar, ${dt}`:`${wd[0].toUpperCase()+wd.slice(1)}, ${dt}`}
+function daySum(L,mk){let w=0,l=0,p=0,pend=0,un=0,uu=0;for(const b of L){const o=+(mk?(b.mkt&&b.mkt.odds):b.odds)||0;
+  if(b.status==='won'){w++;if(o>1.01)uu+=o-1}else if(b.status==='lost'){l++;if(o>1.01)uu-=1}else if(b.status==='push')p++;else if(b.status==='pending')pend++;else un++}
+  return {n:L.length,w,l,p,pend,un,units:uu,hit:w+l?Math.round(w/(w+l)*100):null}}
+function byDay(L){const m=new Map();[...L].sort((a,b)=>String(b.t).localeCompare(String(a.t))).forEach(b=>{const k=dk(b);if(!m.has(k))m.set(k,[]);m.get(k).push(b)});return m}
+function dayHead(k,S){return `<h2 style="margin:0 0 4px;display:flex;justify-content:space-between;gap:8px"><span style="color:var(--fg)">${dayLabel(k)}</span><span>${S.w}–${S.l}${S.pend?' · laukia '+S.pend:''} · <b class="${cls(S.units)}">${u(S.units)} vnt.</b></span></h2>`}
+function groupedHtml(L,mk,limit){const M=byDay(L);let out='',n=0;for(const [k,arr] of M){if(n>=limit)break;const S=daySum(arr,mk);
+  out+=`<div class="card">${dayHead(k,S)}${arr.slice(0,limit-n).map(b=>betHtml(b)).join('')}</div>`;n+=arr.length}return out}
+function dayTableHtml(L,mk,onclick){const M=byDay(L);if(!M.size)return '';let tot=daySum(L,mk);
+  return `<h2>Pelnas pagal dienas <span class="sub">${mk?'bukmekerių koef.':'grupių koef.'}</span></h2><table><tr><th>Diena</th><th class="n">W–L</th><th class="n">%</th><th class="n">vnt.</th></tr>`+
+  [...M].map(([k,arr])=>{const S=daySum(arr,mk);return `<tr ${onclick?`style="cursor:pointer" onclick="${onclick}('${k}')"`:''}><td>${shortDay(k)}</td><td class="n">${S.w}–${S.l}</td><td class="n">${S.hit??'–'}${S.hit!=null?' %':''}</td><td class="n ${cls(S.units)}">${u(S.units)}</td></tr>`}).join('')+
+  `<tr><td><b>Iš viso</b></td><td class="n"><b>${tot.w}–${tot.l}</b></td><td class="n"><b>${tot.hit??'–'}${tot.hit!=null?' %':''}</b></td><td class="n ${cls(tot.units)}"><b>${u(tot.units)}</b></td></tr></table>`}
+function shortDay(k){const f=dayLabel(k).split(',')[0];return f==='Šiandien'||f==='Vakar'?f:new Date(k+'T12:00').toLocaleDateString('lt',{month:'2-digit',day:'2-digit'})}
+function setDay(k){DAY=DAY===k?'all':k;render();window.scrollTo(0,0)}
+function renderBets(){const R=(D.audit&&D.audit.recent)||[];const mk=ST==='bet';
+  const L0=R.filter(b=>ST==='all'||(mk?(b.mkt&&b.mkt.odds):b.status===ST));
+  const days=[...byDay(R).keys()].slice(0,10);
+  $('dayChips').innerHTML=`<button data-d="all" aria-pressed="${DAY==='all'}" onclick="setDay('all')">Visos dienos</button>`+days.map(k=>`<button aria-pressed="${DAY===k}" onclick="setDay('${k}')">${shortDay(k)}</button>`).join('');
+  const L=L0.filter(b=>DAY==='all'||dk(b)===DAY);
+  $('dayTable').innerHTML=dayTableHtml(L0,mk,'setDay');$('dayTable').style.display=L0.length?'':'none';
+  $('betList').innerHTML=groupedHtml(L,mk,200)||'<div class="card"><div class="empty">Nieko nerasta</div></div>';
   document.querySelectorAll('#betChips button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.st===ST))}
 function openGroup(cid){const a=D.audit||{};const g=(a.groups||[]).find(x=>x.cid===cid);if(!g)return;const s=g;
   const mem=(g.members||[]).filter(m=>m.n||m.pend);const R=(a.recent||[]).filter(b=>b.c===cid);
@@ -208,7 +233,8 @@ function openGroup(cid){const a=D.audit||{};const g=(a.groups||[]).find(x=>x.cid
   <div class="stat"><b>${s.w}–${s.l}${s.p?'–'+s.p:''}</b><span>laimėta–pralaimėta</span></div><div class="stat"><b>${s.avg_odds??'–'}</b><span>vid. koeficientas</span></div></div>
   ${g.late?`<div class="card" style="color:var(--warn)">⚠ ${g.late} „prognozės“ paskelbtos jau po rungtynių – neįskaitomos</div>`:''}
   ${mem.length?`<div class="card"><h2>Nariai – kas pataiko</h2><table><tr><th>Narys</th><th class="n">W–L</th><th class="n">%</th><th class="n">vnt.</th></tr>${mem.map(m=>`<tr><td>${m.proven?'⭐ ':''}${esc(m.name)}</td><td class="n">${m.w}–${m.l}</td><td class="n">${pct(m.hit)}</td><td class="n ${cls(m.units)}">${u(m.units,1)}</td></tr>`).join('')}</table></div>`:''}
-  <div class="card"><h2>Statymai</h2>${R.slice(0,60).map(b=>betHtml(b)).join('')||'<div class="empty">Nėra</div>'}</div>
+  ${R.length?`<div class="card">${dayTableHtml(R,false,'')}</div>`:''}
+  ${groupedHtml(R,false,80)||'<div class="card"><div class="empty">Statymų nėra</div></div>'}
   <button class="btn" style="width:100%" onclick="closeSheet()">Uždaryti</button>`;
   $('sheet').classList.add('on')}
 function closeSheet(){$('sheet').classList.remove('on')}
