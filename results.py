@@ -370,6 +370,9 @@ PLAYER_RE = re.compile(r"\b(assist\w*|rebound\w*|3 ?pt\w*|3 ?pointer\w*|three\w*
 BTTS_RE = re.compile(r"\bbtts\b|both teams? (to )?score|both to score|abi komandos (pelnys|imus|ives)|abi imus|\bgg\b|\bng\b")
 
 
+NOTLOSE_RE = re.compile(r"nepralaim|not lose|won'?t lose|wont lose|nepralosi|draw or win|win or draw")
+
+
 def team_subject(b):
     sj = str(b.get("subject") or "")
     return bool(sj) and (same(sj, b.get("home")) or same(sj, b.get("away")) or
@@ -446,6 +449,9 @@ def evaluate(b, e):
     if re.search(r"\bdnb\b|draw no bet|lygiosios\W{0,3}grazin|be lygiuju|lygiuju atveju grazin", pick) and \
             side not in ("Over", "Under", "BTTS", "DC"):
         side, line = "Spread", 0.0                         # DNB = fora 0: lygiosios – statymas grąžinamas
+    if side in ("Win", "DC") and NOTLOSE_RE.search(pick) and mine_home is not None:
+        ok = (hs >= as_) if mine_home else (as_ >= hs)      # „nepralaimės“ = pergalė arba lygiosios (dviguba baigtis)
+        return ("won" if ok else "lost"), f"rezultatas {shown}{extra} → nepralaimėjo: {'taip' if ok else 'ne'}"
     nil = re.search(r"win\w* to nil|laimes? sausai|laimes? be praleist|pergale sausai", pick)
     if nil and mine_home is None and b.get("home"):        # komanda nenurodyta atskirai – ieškom statymo tekste
         if same(b.get("home"), pick) and not same(b.get("away") or "", pick):

@@ -103,6 +103,16 @@ def ambiguous_stat_stays_unknown():
 
 
 @test
+def not_lose_is_double_chance():
+    e = ev("Kosovo", "Israel", 0, 0)
+    b = {"home": "Kosovo", "away": "Israel", "pick": "Izraelis nepralaimes @2.0", "side": "Win", "team": "Israel",
+         "sport": "soccer"}
+    assert st(R.evaluate(b, e)) == "won"
+    assert st(R.evaluate(dict(b, pick="Izraelis @4.5"), e)) == "lost"
+    assert st(R.evaluate(b, ev("Kosovo", "Israel", 1, 0))) == "lost"
+
+
+@test
 def team_subject_is_not_player():
     leg = {"sport": "basketball", "home": "PAO", "away": "Barca", "subject": "PAO vs Barca",
            "pick": "PAO vs Barca total under 83.5", "side": "Under", "line": 83.5}

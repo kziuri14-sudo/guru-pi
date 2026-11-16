@@ -389,7 +389,7 @@ def _apply_players(leg, t, players, keys, line, side, src, labels):
     lab = "+".join(labels.get(k, k) for k in keys)
     who = ", ".join(f"{p['first'].title()} {p['last'].title()}".strip() for p in chosen)
     res = "push" if total == line else ("won" if (total > line) == (side == "Over") else "lost")
-    return res, f"{who}: {lab} {total:g} ({'daugiau' if side == 'Over' else 'mažiau'} {line:g}) – {src}", "ok"
+    return res, f"{who}: {lab} {total:g} – statymas „{'daugiau' if side == 'Over' else 'mažiau'} nei {line:g}“ – {src}", "ok"
 
 
 # ---------------------------------------------------------------- futbolo kampiniai / kortelės / smūgiai

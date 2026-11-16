@@ -569,6 +569,23 @@ class Auditor:
                         l.pop("note", None)
                         l["tries"] = 0
             self.d["settle_ver"] = 19
+        if self.d.get("settle_ver", 0) < 20:          # „nepralaimės“ buvo vertinama kaip pergalė – perskaičiuojam
+            nl = re.compile(r"(?i)nepralaim|not lose|won'?t lose|draw or win|win or draw")
+            for b in self.d["bets"]:
+                if any(nl.search(str(l.get("pick") or "")) for l in b["legs"]):
+                    b["status"], b["tries"], b["next"] = "pending", 0, 0
+                    b.pop("vf", None)
+                    for l in b["legs"]:
+                        l["status"], l["detail"] = "pending", None
+                        for k in ("note", "vf", "doubt"):
+                            l.pop(k, None)
+            for b in self.d["bets"]:                  # abejonės pagal seną žodyną – tikrinsim iš naujo
+                for l in b["legs"]:
+                    if l.get("doubt"):
+                        l.pop("doubt", None)
+                        l.pop("vf", None)
+                        b.pop("vf", None)
+            self.d["settle_ver"] = 20
         self._keys = {(b["c"], b["mid"]) for b in self.d["bets"]}
         self._done, self._last_save, self._sum = [], 0, (0, None)
         self._ocr = False
@@ -1505,6 +1522,9 @@ LOGIŠKAI atitinka statymą ir pateiktą pagrindimą (rezultatą / statistiką).
 - ar teisinga komanda / žaidėjas, kryptis (daugiau / mažiau), linija ir fora,
 - ar statistika atitinka rinką (įvarčiai, taškai, kampiniai, kortelės, žaidėjo taškai ir t. t.),
 - ar „įskaitant pratęsimą“ / „be pratęsimo“ taisyklė pritaikyta teisingai.
+Taisyklės: sveika linija (pvz. „Over 3“, „Under 3.0“, fora −1) ir lygus rezultatas = grąžinama (push) – tai teisinga.
+„Komanda suminis daugiau X“ / „Komanda over X“ = TOS KOMANDOS įvarčiai/taškai, ne abiejų. Kuponas (kelios eilutės) vertinamas
+kiekviena eilutė atskirai – tikrink tik nurodytą eilutę.
 Nespręsk iš naujo, jei pagrindime trūksta duomenų – tada ok: true. Klaida = tik kai sprendimas aiškiai prieštarauja pagrindimui.
 Statymai:
 {items}
