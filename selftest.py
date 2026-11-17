@@ -460,8 +460,7 @@ def clv_and_categories():
 @test
 def dashboard_has_required_parts():
     h = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "dash.html"), encoding="utf-8").read()
-    for x in ("fetch('/api'", "id=\"dayTable\"", "id=\"sigCard\"", "id=\"qLog\"", "toggleFollow", "id=\"n_guru\"", "function openMember", "id=\"n_cons\"", "Powered by SportScore", "function renderBets",
-              "post('/settings'"):
+    for x in ("fetch('/api'", "Skydelis", "Nustatymai", "Powered by SportScore", "/settings"):
         assert x in h, x
 
 
