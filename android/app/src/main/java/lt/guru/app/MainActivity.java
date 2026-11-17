@@ -13,6 +13,7 @@ import android.webkit.WebViewClient;
 /** Lažybų analitika: atidaro Raspberry puslapį. Dabartinį (kintantį) adresą suranda pati – assets/index.html. */
 public class MainActivity extends Activity {
     private WebView web;
+    private long pausedAt = 0;
 
     @Override
     protected void onCreate(Bundle state) {
@@ -24,7 +25,8 @@ public class MainActivity extends Activity {
         s.setDomStorageEnabled(true);
         s.setAllowFileAccess(true);
         s.setAllowUniversalAccessFromFileURLs(true);
-        s.setCacheMode(WebSettings.LOAD_DEFAULT);
+        s.setCacheMode(WebSettings.LOAD_NO_CACHE);   // visada naujausias Raspberry puslapis
+        web.clearCache(true);
         web.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest req) {
@@ -38,6 +40,19 @@ public class MainActivity extends Activity {
         setContentView(web);
         if (state != null) web.restoreState(state);
         else web.loadUrl("file:///android_asset/index.html");
+    }
+
+    @Override
+    protected void onPause() { super.onPause(); pausedAt = System.currentTimeMillis(); }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // grįžus po ilgesnės pertraukos – iš naujo surandam Raspberry adresą (jis galėjo pasikeisti)
+        if (pausedAt > 0 && System.currentTimeMillis() - pausedAt > 10 * 60 * 1000) {
+            web.clearCache(true);
+            web.loadUrl("file:///android_asset/index.html");
+        }
     }
 
     @Override
