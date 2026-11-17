@@ -94,6 +94,11 @@ th{font-size:12px;color:var(--mut);font-weight:600;border-top:0}td.n,th.n{text-a
     <div class="grid2"><div class="stat"><b id="sigU">–</b><span>pelnas (grupės koef.)</span></div><div class="stat"><b id="sigB">–</b><span>pelnas pas bukmekerius</span></div>
     <div class="stat"><b id="sigW">–</b><span>laimėta–pralaimėta</span></div><div class="stat"><b id="sigH">–</b><span>pataikymas</span></div></div>
   </div>
+  <div class="card" id="mineCard" style="display:none;cursor:pointer;border-color:#f5b301" onclick="openMine()">
+    <h2><span>★ Mano sekami</span><a>Daugiau →</a></h2>
+    <div class="grid2"><div class="stat"><b id="mU">–</b><span>pelnas nuo pradžios</span></div><div class="stat"><b id="mW">–</b><span>laimėta–pralaimėta</span></div>
+    <div class="stat"><b id="mH">–</b><span>pataikymas</span></div><div class="stat"><b id="mT">–</b><span>šiandien</span></div></div>
+    <div class="sub" id="mS" style="margin-top:8px"></div></div>
   <div class="card hero">
     <h2><span id="heroLbl">Šiandienos pelnas</span><span class="sub" id="heroPend"></span></h2>
     <div class="big" id="heroUnits">–</div><div class="sub" id="heroSub">vienetų, statant po 1 vnt. kiekvienam statymui</div>
@@ -117,7 +122,7 @@ th{font-size:12px;color:var(--mut);font-weight:600;border-top:0}td.n,th.n{text-a
 </section>
 
 <section id="v-statymai">
-  <div class="chips" id="betChips"><button data-st="all">Visi</button><button data-st="won">Laimėti</button><button data-st="lost">Pralaimėti</button><button data-st="pending">Laukia</button><button data-st="unknown">Nežinomi</button><button data-st="bet">Galima statyti</button></div>
+  <div class="chips" id="betChips"><button data-st="all">Visi</button><button data-st="won">Laimėti</button><button data-st="lost">Pralaimėti</button><button data-st="pending">Laukia</button><button data-st="unknown">Nežinomi</button><button data-st="bet">Galima statyti</button><button data-st="fo">★ Sekami</button></div>
   <div class="chips" id="dayChips"></div>
   <div class="card" id="dayTable"></div>
   <div id="betList"></div>
@@ -190,6 +195,10 @@ function renderHome(){const a=D.audit||{};const s=PER==='today'?a.today_total:PE
     $('sigName').textContent=N(g0.chat);$('sigU').textContent=u(st.units);$('sigU').className=cls(st.units);
     $('sigB').textContent=bt.n?u(bt.units):'–';$('sigB').className=cls(bt.units);$('sigW').textContent=`${st.w||0}–${st.l||0}`;$('sigH').textContent=pct(st.hit);
     $('sigPend').textContent=st.pend?`laukia ${st.pend}`:'';$('sigCard').onclick=()=>openGroup(g0.cid)}else $('sigCard').style.display='none';
+  const mi=a.mine||{},mt=mi.total||{},md=mi.today||{};
+  if((mi.items||[]).length){$('mineCard').style.display='';$('mU').textContent=u(mt.units)+' vnt.';$('mU').className=cls(mt.units);
+    $('mW').textContent=`${mt.w||0}–${mt.l||0}`;$('mH').textContent=pct(mt.hit);$('mT').textContent=`${md.w||0}–${md.l||0}${md.n?' · '+u(md.units,1):''}`;$('mT').className=cls(md.units);
+    $('mS').textContent=`Sekami: ${mi.items.length} · ${mt.pend?'dar laukia '+mt.pend+' · ':''}skaičiuojama po 1 vnt. kiekvienam statymui`}else $('mineCard').style.display='none';
   const RA=(a.recent||[]);const wk=new Date(Date.now()-7*864e5).toLocaleDateString('sv');
   $('homeDays').innerHTML=dayTableHtml(RA.filter(b=>dk(b)>=wk),PER==='bet','goDay')||'<div class="empty">Statymų dar nėra</div>';
   const L=leaderSet();const g=L.group,m=L.member;
@@ -236,10 +245,19 @@ function groupTableHtml(L,mk,k){const a=D.audit||{};const m=new Map();L.forEach(
   rows.map(r=>`<tr style="cursor:pointer" onclick="openGroup('${esc(r.c)}')"><td style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.name)}</td><td class="n">${r.S.w}–${r.S.l}${r.S.pend?` <span class="sub">+${r.S.pend}</span>`:''}</td><td class="n">${r.S.hit??'–'}${r.S.hit!=null?' %':''}</td><td class="n ${cls(r.S.units)}">${u(r.S.units)}</td></tr>`).join('')+
   `<tr><td><b>Iš viso</b></td><td class="n"><b>${tot.w}–${tot.l}</b></td><td class="n"><b>${tot.hit??'–'}${tot.hit!=null?' %':''}</b></td><td class="n ${cls(tot.units)}"><b>${u(tot.units)}</b></td></tr></table>`+
   (tot.pend?`<div class="sub" style="margin-top:6px">Dar laukia rezultato: ${tot.pend} – pelnas pasikeis, kai rungtynės baigsis.</div>`:'')}
+function openMine(){const a=D.audit||{},mi=a.mine||{},t=mi.total||{};const R=(a.recent||[]).filter(b=>b.fo);
+  $('pane').innerHTML=`<div class="grab"></div><h1 style="font-size:20px">★ Mano sekami</h1><div class="sub" style="margin-bottom:12px">Tik pažymėti kanalai ir žmonės · nuo pradžios</div>
+  <div class="grid2" style="margin-bottom:12px"><div class="stat"><b class="${cls(t.units)}">${u(t.units)} vnt.</b><span>pelnas</span></div><div class="stat"><b>${pct(t.hit)}</b><span>pataikymas</span></div>
+  <div class="stat"><b>${t.w||0}–${t.l||0}${t.p?'–'+t.p:''}</b><span>laimėta–pralaimėta</span></div><div class="stat"><b>${t.pend||0}</b><span>dar laukia</span></div></div>
+  <div class="card"><h2>Kiekvienas atskirai</h2><table><tr><th></th><th>Kas</th><th class="n">W–L</th><th class="n">%</th><th class="n">vnt.</th></tr>${(mi.items||[]).sort((x,y)=>(y.units||0)-(x.units||0)).map(x=>`<tr><td style="width:34px">${starBtn(x.k)}</td><td>${esc(followName(x.k))}</td><td class="n">${x.w}–${x.l}${x.pend?` <span class="sub">+${x.pend}</span>`:''}</td><td class="n">${pct(x.hit)}</td><td class="n ${cls(x.units)}">${u(x.units,1)}</td></tr>`).join('')}</table></div>
+  ${R.length?`<div class="card">${dayTableHtml(R,false,'')}</div>`:''}
+  ${groupedHtml(R,false,80)||'<div class="card"><div class="empty">Statymų dar nėra</div></div>'}
+  <button class="btn" style="width:100%" onclick="closeSheet()">Uždaryti</button>`;
+  $('sheet').classList.add('on')}
 function goDay(k){DAY=k;location.hash='#statymai'}
 function setDay(k){DAY=DAY===k?'all':k;render();window.scrollTo(0,0)}
 function renderBets(){const R=(D.audit&&D.audit.recent)||[];const mk=ST==='bet';
-  const L0=R.filter(b=>ST==='all'||(mk?(b.mkt&&b.mkt.odds):b.status===ST));
+  const L0=R.filter(b=>ST==='all'||(ST==='fo'?b.fo:mk?(b.mkt&&b.mkt.odds):b.status===ST));
   const days=[...byDay(R).keys()].slice(0,10);
   $('dayChips').innerHTML=`<button data-d="all" aria-pressed="${DAY==='all'}" onclick="setDay('all')">Visos dienos</button>`+days.map(k=>`<button aria-pressed="${DAY===k}" onclick="setDay('${k}')">${shortDay(k)}</button>`).join('');
   const L=L0.filter(b=>DAY==='all'||dk(b)===DAY);
@@ -275,7 +293,7 @@ async function saveNotify(extra){if(!K){toast('Atidaryk programėlę iš Raspber
   try{await post('/settings',extra);D.settings=Object.assign(D.settings||{},extra);return true}catch(e){toast('Nepavyko: '+e.message);return false}}
 async function toggleFollow(key,btn){const f=follows();const on=!f.has(key);on?f.add(key):f.delete(key);
   if(await saveNotify({follow:[...f]})){document.querySelectorAll('.star').forEach(b=>{const k=(b.getAttribute('onclick').match(/toggleFollow\('([^']+)'/)||[])[1];if(k===key){b.classList.toggle('on',on);b.textContent=on?'★':'☆'}});
-    toast(on?'★ Gausi pranešimus':'Pranešimai išjungti');if(view()==='daugiau')renderMore()}}
+    toast(on?'★ Gausi pranešimus':'Pranešimai išjungti');setTimeout(full,400);if(view()==='daugiau')renderMore()}}
 function followName(k0){const at=k0.indexOf('@');const k=at>0?k0.slice(0,at):k0;const cat=at>0?' · tik '+k0.slice(at+1):'';return followName0(k)+cat}
 function followName0(k){const a=(D&&D.audit)||{};const p=k.split(':');const g=(a.groups||[]).find(x=>x.cid===p[1]);
   if(p[0]==='g')return g?N(g.chat):p[1];const m=g&&(g.members||[]).find(x=>String(x.u)===p.slice(2).join(':'));return (m?m.name:'žmogus')+' · '+(g?N(g.chat):'')}

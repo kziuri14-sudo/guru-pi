@@ -1661,9 +1661,24 @@ Jei tekste atsakymo nėra – {{"found": false}}.
         for d in sorted(day):
             cum += day[d]
             series.append([d, round(cum, 2), round(day[d], 2)])
+        follow = set(((getattr(self, "settings", None) or {}).get("follow")) or [])
+
+        def fkeys(b):
+            cat, c = _cat(b), b["c"]
+            ks = [f"g:{c}", f"g:{c}@{cat}"]
+            if b.get("u"):
+                ks += [f"m:{c}:{b['u']}", f"m:{c}:{b['u']}@{cat}"]
+            return ks
+
+        fol = lambda b: any(k in follow for k in fkeys(b))
+        mine_b = [b for b in bets if fol(b)]
+        mine = {"total": _stats(mine_b), "today": _stats([b for b in mine_b if str(b["t"])[:10] == today]),
+                "items": [{"k": k, **{x: y for x, y in _stats([b for b in bets if k in fkeys(b)]).items()
+                                      if x in ("n", "w", "l", "p", "pend", "units", "hit", "roi")}} for k in sorted(follow)]}
         recent = []
         for b in sorted(bets, key=lambda x: x["t"], reverse=True)[:400]:
             recent.append({"t": b["t"], "c": b["c"], "chat": chats.get(b["c"], b["c"]), "who": b.get("un"),
+                           "u": str(b["u"]) if b.get("u") else None, "fo": fol(b),
                            "status": b["status"], "odds": b.get("odds"), "photo": b.get("photo", False),
                            "mkt": b.get("mkt"), "gm": b.get("grp_mark"), "bg": b.get("by_group", False),
                            "vf": b.get("vf"), "clv": b.get("clv"), "cl": b.get("clv_close"), "cat": _cat(b), "dt": [l.get("doubt") for l in b["legs"] if l.get("doubt")],
@@ -1676,6 +1691,7 @@ Jei tekste atsakymo nėra – {{"found": false}}.
                    "all": _leaders(bets, chats, kind), "bet": _leaders(bb, chats, kind)}
         return {"groups": groups, "total": tot, "leaders": leaders, "since": self.d.get("since"),
                 "today_total": _stats([b for b in bets if str(b["t"])[:10] == today]), "bet_total": _stats(bb),
+                "mine": mine,
                 "mkt_checked": sum(1 for b in bets if "mkt" in b), "mkt_ok": len(bb),
                 "odds_src": (props.ODDS_STATE.get("last") if props and hasattr(props, "ODDS_STATE") else ""), "series": series, "hours": hours, "sides": sides, "sports": sports,
                 "odds": oddsb, "recent": recent, "chats": len(chats), "queue": self.qlen(), "queue_photo": self.qlen(True),

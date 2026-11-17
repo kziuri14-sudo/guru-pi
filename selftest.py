@@ -458,10 +458,30 @@ def clv_and_categories():
 
 
 @test
+def followed_stats():
+    import pi_audit as A
+    from pathlib import Path
+    d = tempfile.mkdtemp()
+    a = A.Auditor(None, {}, logging.getLogger("t"), Path(d), Path(d))
+    a.d["chats"], a.d["kind"] = {"c1": "Chat", "c2": "Kanalas"}, {"c1": "group", "c2": "channel"}
+    now = datetime.now().isoformat(timespec="minutes")
+    mk = lambda c, u, st, odds: {"c": c, "mid": 1, "u": u, "t": now, "status": st, "odds": odds,
+                                 "legs": [{"home": "A", "away": "B", "pick": "1", "side": "Win", "sport": "soccer",
+                                           "status": st}]}
+    a.d["bets"] = [mk("c1", "7", "won", 2.0), mk("c1", "8", "lost", 2.0), mk("c2", None, "won", 1.5),
+                   mk("c2", None, "lost", 1.8)]
+    a.settings = {"follow": ["m:c1:7", "g:c2"]}
+    m = a._summary()["mine"]
+    assert (m["total"]["w"], m["total"]["l"]) == (2, 1) and abs(m["total"]["units"] - 0.5) < 1e-6, m["total"]
+    assert {x["k"]: (x["w"], x["l"]) for x in m["items"]} == {"g:c2": (1, 1), "m:c1:7": (1, 0)}
+    assert sum(1 for b in a._summary()["recent"] if b["fo"]) == 3
+
+
+@test
 def dashboard_has_required_parts():
     h = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "dash.html"), encoding="utf-8").read()
     for x in ("fetch('/api'", "id=\"dayTable\"", "id=\"homeDays\"", "id=\"sigCard\"", "Powered by SportScore",
-              "function renderBets", "post('/settings'", "toggleFollow", "id=\"n_guru\"", "Nariai – kas pataiko"):
+              "function renderBets", "post('/settings'", "toggleFollow", "id=\"n_guru\"", "Nariai – kas pataiko", "function openMine", "data-st=\"fo\""):
         assert x in h, x
 
 
