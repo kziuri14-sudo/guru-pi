@@ -35,7 +35,8 @@ td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
 .locked .ov{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-weight:600;background:color-mix(in srgb,var(--card) 35%,transparent)}
 .empty{color:var(--mut);text-align:center;padding:20px 8px}
 </style></head><body><div class="wrap">
-<header><div><h1>Signalai</h1><div class="sub" id="d"></div></div><div class="sub"><span class="dot" id="dot"></span><span id="st">jungiamasi…</span></div></header>
+<header><div><h1>Signalai</h1><div class="sub" id="d"></div></div><div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px"><div class="sub"><span class="dot" id="dot"></span><span id="st">jungiamasi…</span></div>
+<a id="back" href="#" style="display:none;font:600 12.5px/1 inherit;padding:7px 10px;border:1px solid var(--line);border-radius:10px;color:var(--acc);text-decoration:none;background:var(--card)">← Mano paskyra</a></div></header>
 <div class="card"><h2><span>Pelnas nuo pradžios</span><span id="pend"></span></h2>
   <div class="big" id="u">–</div><div class="sub">vienetų, statant po 1 vnt. kiekvienam signalui</div>
   <div class="kpis"><div class="kpi"><b id="wl">–</b><span>laimėta / pral.</span></div><div class="kpi"><b id="h">–</b><span>pataikymas</span></div><div class="kpi"><b id="td">–</b><span>šiandien</span></div></div></div>
@@ -53,6 +54,8 @@ td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const m=location.hash.match(/g=([^&]+)/);let G=m?m[1]:null;try{if(G)localStorage.setItem('g',G);else G=localStorage.getItem('g')}catch(e){}
+let OK_=null;try{OK_=localStorage.getItem('k')}catch(e){}
+if(OK_){$('back').style.display='';$('back').href='/#k='+encodeURIComponent(OK_)}   // savininkas – grįžti atgal
 const u=(x,d=2)=>x==null?'–':(x>0?'+':'')+(+x).toFixed(d);const cls=x=>x>0?'pos':x<0?'neg':'';const pct=x=>x==null?'–':Math.round(x)+' %';
 const ST={won:'Laimėta',lost:'Pralaimėta',push:'Grąžinta',pending:'Laukia',unknown:'Nežinoma'};
 const FAKE=['██████ ██████','████ ████████','███████ ███','█████ ██████'];

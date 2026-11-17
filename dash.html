@@ -82,7 +82,8 @@ th{font-size:12px;color:var(--mut);font-weight:600;border-top:0}td.n,th.n{text-a
 .foot{font-size:12px;color:var(--mut);text-align:center;margin:8px 0 0}.foot a{color:var(--acc)}
 .prog{height:6px;background:var(--soft);border-radius:3px;overflow:hidden;margin-top:8px}.prog i{display:block;height:100%;background:var(--acc)}
 </style></head><body><div class="wrap">
-<header><div><h1>Lažybų analitika</h1><div class="sub" id="hdate"></div></div><div class="status"><span class="dot" id="dot"></span><span id="stxt">jungiamasi…</span></div></header>
+<header><div><h1>Lažybų analitika</h1><div class="sub" id="hdate"></div></div><div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px"><div class="status"><span class="dot" id="dot"></span><span id="stxt">jungiamasi…</span></div>
+<button class="btn" id="asGuest" style="padding:6px 10px;font-size:12.5px;display:none" onclick="toGuest()">👁 Svečio vaizdas</button></div></header>
 
 <section id="v-siandien">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
@@ -145,6 +146,7 @@ th{font-size:12px;color:var(--mut);font-weight:600;border-top:0}td.n,th.n{text-a
     <div class="sub">Svečias įsidiegia tą pačią programėlę (guru.apk) ir įveda šį kodą:</div>
     <div style="display:flex;gap:8px;align-items:center"><code id="g_code" style="flex:1;font-size:15px;padding:10px;background:var(--soft);border-radius:10px;word-break:break-all">–</code><button class="btn" id="g_copy">Kopijuoti</button></div>
     <div class="sub">Pranešimus apie naujus signalus svečias gaus ntfy programėlėje užsiprenumeravęs tą patį kodą.</div>
+    <button class="btn primary" id="g_view" onclick="toGuest()">👁 Persijungti į svečio vaizdą</button>
     <button class="btn" id="g_new">Pakeisti kodą (seni svečiai nebeprisijungs)</button></div></div>
   <div class="card"><h2>Nustatymai</h2><div class="set" id="set">
     <label>Pranešimai sustabdyti <input type="checkbox" id="s_paused"></label>
@@ -261,6 +263,8 @@ function openMine(){const a=D.audit||{},mi=a.mine||{},t=mi.total||{};const R=(a.
   ${groupedHtml(R,false,80)||'<div class="card"><div class="empty">Statymų dar nėra</div></div>'}
   <button class="btn" style="width:100%" onclick="closeSheet()">Uždaryti</button>`;
   $('sheet').classList.add('on')}
+function toGuest(){const g=D&&D.settings&&D.settings.guest_key;if(!g){toast('Svečių prieiga neįjungta');return}
+  try{localStorage.setItem('k',K)}catch(e){}location.href='/guest#g='+encodeURIComponent(g)+'&o=1'}
 function goDay(k){DAY=k;location.hash='#statymai'}
 function setDay(k){DAY=DAY===k?'all':k;render();window.scrollTo(0,0)}
 function renderBets(){const R=(D.audit&&D.audit.recent)||[];const mk=ST==='bet';
@@ -314,14 +318,14 @@ function renderMore(){const c=D.current||{},en=D.energy||{},a=D.audit||{};
   $('srcList').innerHTML=src.map(([n,v])=>`<div class="row" style="cursor:default"><div class="main"><div class="t">${n}</div><div class="s">${esc(v||'–')}</div></div></div>`).join('');
   const sig=(D.events||[]).filter(e=>e.kind==='signal').slice(-15).reverse();
   $('sigList').innerHTML=sig.map(e=>`<div class="row" style="cursor:default"><div class="main"><div class="t">${esc((e.text||'').split('\n')[0])}</div><div class="s">${esc((e.text||'').split('\n').slice(1).join(' · '))}</div></div><div class="r"><small>${new Date(e.t).toLocaleString('lt',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}</small>${e.link?`<a class="link" href="${esc(e.link)}" target="_blank" rel="noopener">Atidaryti</a>`:''}</div></div>`).join('')||'<div class="empty">Signalų dar nebuvo</div>';
-  const sG=D.settings||{};$('g_on').checked=sG.guest_on!==false;$('g_code').textContent=sG.guest_topic||'–';
+  const sG=D.settings||{};$('g_view').style.display=sG.guest_key?'':'none';$('g_on').checked=sG.guest_on!==false;$('g_code').textContent=sG.guest_topic||'–';
   const sN=D.settings||{};$('n_guru').checked=sN.notify_guru!==false;$('n_auto').checked=!!sN.auto_proven;
   const fl=[...follows()];$('followList').innerHTML=fl.length?fl.map(k=>`<div class="row" style="cursor:default">${starBtn(k)}<div class="main"><div class="t">${esc(followName(k))}</div><div class="s">${k[0]==='g'?'visa grupė':'žmogus'}</div></div></div>`).join(''):'<div class="sub">Dar nieko nepažymėta.</div>';
   const s=D.settings||{};if(!$('set').contains(document.activeElement)){$('s_paused').checked=!!s.paused;$('s_quiet').checked=!!s.quiet;$('s_qf').value=s.quiet_from||'23:00';$('s_qt').value=s.quiet_to||'08:00';$('s_price').value=s.kwh_price??0.25}
   $('setnote').textContent=K?'':'Keisti galima tik atidarius puslapį iš Raspberry pranešimo nuorodos.';['b_save','b_test'].forEach(i=>$(i).disabled=!K)}
 function render(){if(!D)return;const v=view();$('hdate').textContent=new Date().toLocaleDateString('lt',{weekday:'long',month:'long',day:'numeric'});
   try{if(v==='grupes')renderGroups();else if(v==='statymai')renderBets();else if(v==='daugiau')renderMore();else renderHome()}catch(e){console.error(e)}}
-async function full(){try{const r=await fetch('/api?k='+encodeURIComponent(K||''),{cache:'no-store'});D=await r.json();$('dot').className='dot';$('stxt').textContent='Raspberry veikia';render()}catch(e){$('dot').className='dot off';$('stxt').textContent='nėra ryšio'}}
+async function full(){try{const r=await fetch('/api?k='+encodeURIComponent(K||''),{cache:'no-store'});D=await r.json();$('dot').className='dot';$('stxt').textContent='Raspberry veikia';$('asGuest').style.display=(D.settings&&D.settings.guest_key&&D.settings.guest_on!==false)?'':'none';render()}catch(e){$('dot').className='dot off';$('stxt').textContent='nėra ryšio'}}
 async function live(){if(view()!=='daugiau')return;try{const p=await (await fetch('/live?k='+encodeURIComponent(K||''),{cache:'no-store'})).json();$('rCpu').textContent=Math.round(p.cpu)+' %';$('rW').textContent=p.w.toFixed(2)+' W';$('rTemp').textContent=p.temp.toFixed(1)+' °C'}catch(e){}}
 async function post(path,body){const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...body,k:K})});if(!r.ok)throw new Error(await r.text());return r.json()}
 $('b_save').onclick=async()=>{try{await post('/settings',{paused:$('s_paused').checked,quiet:$('s_quiet').checked,quiet_from:$('s_qf').value,quiet_to:$('s_qt').value,kwh_price:+$('s_price').value});toast('Išsaugota');full()}catch(e){toast('Nepavyko: '+e.message)}};
