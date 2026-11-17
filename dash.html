@@ -97,8 +97,9 @@ th{font-size:12px;color:var(--mut);font-weight:600;border-top:0}td.n,th.n{text-a
   </div>
   <div class="card" id="mineCard" style="display:none;cursor:pointer;border-color:#f5b301" onclick="openMine()">
     <h2><span>★ Mano sekami</span><a>Daugiau →</a></h2>
-    <div class="grid2"><div class="stat"><b id="mU">–</b><span>pelnas nuo pradžios</span></div><div class="stat"><b id="mW">–</b><span>laimėta–pralaimėta</span></div>
-    <div class="stat"><b id="mH">–</b><span>pataikymas</span></div><div class="stat"><b id="mT">–</b><span>šiandien</span></div></div>
+    <div class="seg" id="mSeg" style="margin-bottom:10px" onclick="event.stopPropagation()"></div>
+    <div class="grid2"><div class="stat"><b id="mU">–</b><span id="mUl">pelnas</span></div><div class="stat"><b id="mW">–</b><span>laimėta–pralaimėta</span></div>
+    <div class="stat"><b id="mH">–</b><span>pataikymas</span></div><div class="stat"><b id="mT">–</b><span>dar laukia</span></div></div>
     <div class="sub" id="mS" style="margin-top:8px"></div></div>
   <div class="card hero">
     <h2><span id="heroLbl">Šiandienos pelnas</span><span class="sub" id="heroPend"></span></h2>
@@ -205,9 +206,11 @@ function renderHome(){const a=D.audit||{};const s=PER==='today'?a.today_total:PE
     $('sigB').textContent=bt.n?u(bt.units):'–';$('sigB').className=cls(bt.units);$('sigW').textContent=`${st.w||0}–${st.l||0}`;$('sigH').textContent=pct(st.hit);
     $('sigPend').textContent=st.pend?`laukia ${st.pend}`:'';$('sigCard').onclick=()=>openGroup(g0.cid)}else $('sigCard').style.display='none';
   const mi=a.mine||{},mt=mi.total||{},md=mi.today||{};
-  if((mi.items||[]).length){$('mineCard').style.display='';$('mU').textContent=u(mt.units)+' vnt.';$('mU').className=cls(mt.units);
-    $('mW').textContent=`${mt.w||0}–${mt.l||0}`;$('mH').textContent=pct(mt.hit);$('mT').textContent=`${md.w||0}–${md.l||0}${md.n?' · '+u(md.units,1):''}`;$('mT').className=cls(md.units);
-    $('mS').textContent=`Sekami: ${mi.items.length} · ${mt.pend?'dar laukia '+mt.pend+' · ':''}skaičiuojama po 1 vnt. kiekvienam statymui`}else $('mineCard').style.display='none';
+  if((mi.items||[]).length){$('mineCard').style.display='';const P=minePeriod(MP);
+    $('mSeg').innerHTML=MPER.map(([k,t])=>`<button aria-pressed="${MP===k}" onclick="MP='${k}';try{localStorage.setItem('mp',MP)}catch(e){};render()">${t}</button>`).join('');
+    $('mU').textContent=u(P.units)+' vnt.';$('mU').className=cls(P.units);$('mUl').textContent='pelnas · '+P.label;
+    $('mW').textContent=`${P.w}–${P.l}`;$('mH').textContent=pct(P.hit);$('mT').textContent=P.pend;
+    $('mS').textContent=`Sekami: ${mi.items.length} · skaičiuojama po 1 vnt. kiekvienam statymui`}else $('mineCard').style.display='none';
   const RA=(a.recent||[]);const wk=new Date(Date.now()-7*864e5).toLocaleDateString('sv');
   $('homeDays').innerHTML=dayTableHtml(RA.filter(b=>dk(b)>=wk),PER==='bet','goDay')||'<div class="empty">Statymų dar nėra</div>';
   const L=leaderSet();const g=L.group,m=L.member;
@@ -254,13 +257,28 @@ function groupTableHtml(L,mk,k){const a=D.audit||{};const m=new Map();L.forEach(
   rows.map(r=>`<tr style="cursor:pointer" onclick="openGroup('${esc(r.c)}')"><td style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.name)}</td><td class="n">${r.S.w}–${r.S.l}${r.S.pend?` <span class="sub">+${r.S.pend}</span>`:''}</td><td class="n">${r.S.hit??'–'}${r.S.hit!=null?' %':''}</td><td class="n ${cls(r.S.units)}">${u(r.S.units)}</td></tr>`).join('')+
   `<tr><td><b>Iš viso</b></td><td class="n"><b>${tot.w}–${tot.l}</b></td><td class="n"><b>${tot.hit??'–'}${tot.hit!=null?' %':''}</b></td><td class="n ${cls(tot.units)}"><b>${u(tot.units)}</b></td></tr></table>`+
   (tot.pend?`<div class="sub" style="margin-top:6px">Dar laukia rezultato: ${tot.pend} – pelnas pasikeis, kai rungtynės baigsis.</div>`:'')}
-function openMine(){const a=D.audit||{},mi=a.mine||{},t=mi.total||{};const R=(a.recent||[]).filter(b=>b.fo);
-  $('pane').innerHTML=`<div class="grab"></div><h1 style="font-size:20px">★ Mano sekami</h1><div class="sub" style="margin-bottom:12px">Tik pažymėti kanalai ir žmonės · nuo pradžios</div>
-  <div class="grid2" style="margin-bottom:12px"><div class="stat"><b class="${cls(t.units)}">${u(t.units)} vnt.</b><span>pelnas</span></div><div class="stat"><b>${pct(t.hit)}</b><span>pataikymas</span></div>
-  <div class="stat"><b>${t.w||0}–${t.l||0}${t.p?'–'+t.p:''}</b><span>laimėta–pralaimėta</span></div><div class="stat"><b>${t.pend||0}</b><span>dar laukia</span></div></div>
-  <div class="card"><h2>Kiekvienas atskirai</h2><table><tr><th></th><th>Kas</th><th class="n">W–L</th><th class="n">%</th><th class="n">vnt.</th></tr>${(mi.items||[]).sort((x,y)=>(y.units||0)-(x.units||0)).map(x=>`<tr><td style="width:34px">${starBtn(x.k)}</td><td>${esc(followName(x.k))}</td><td class="n">${x.w}–${x.l}${x.pend?` <span class="sub">+${x.pend}</span>`:''}</td><td class="n">${pct(x.hit)}</td><td class="n ${cls(x.units)}">${u(x.units,1)}</td></tr>`).join('')}</table></div>
-  ${R.length?`<div class="card">${dayTableHtml(R,false,'')}</div>`:''}
-  ${groupedHtml(R,false,80)||'<div class="card"><div class="empty">Statymų dar nėra</div></div>'}
+let MP='today';try{MP=localStorage.getItem('mp')||'today'}catch(e){}
+const MPER=[['today','Šiandien'],['yday','Vakar'],['7','7 d.'],['all','Viskas']];
+function inMP(b,P){const k=dk(b),td=new Date().toLocaleDateString('sv'),yd=new Date(Date.now()-864e5).toLocaleDateString('sv');
+  return P==='all'||(P==='today'?k===td:P==='yday'?k===yd:P==='7'?k>=new Date(Date.now()-6*864e5).toLocaleDateString('sv'):k===P)}
+function minePeriod(P){const a=D.audit||{},mi=a.mine||{};const fol=new Set((mi.items||[]).map(x=>x.k));
+  const R=(a.recent||[]).filter(b=>b.fo&&inMP(b,P));const label=P==='all'?'nuo pradžios':P==='today'?'šiandien':P==='yday'?'vakar':P==='7'?'7 dienos':dayLabel(P).split(',')[0];
+  let items;
+  if(P==='all'){const t=mi.total||{};items=(mi.items||[]).map(x=>Object.assign({},x));return {label,R,items,w:t.w||0,l:t.l||0,p:t.p||0,pend:t.pend||0,units:t.units||0,hit:t.hit}}
+  const by={};R.forEach(b=>{const k=b.fk&&fol.has(b.fk)?b.fk:'?';(by[k]=by[k]||[]).push(b)});
+  items=(mi.items||[]).map(x=>{const S=daySum(by[x.k]||[],false);return {k:x.k,w:S.w,l:S.l,pend:S.pend,units:S.units,hit:S.hit,n:(by[x.k]||[]).length}});
+  const S=daySum(R,false);return {label,R,items,w:S.w,l:S.l,p:S.p,pend:S.pend,units:S.units,hit:S.hit}}
+function openMine(P0){const a=D.audit||{};if(P0)MP=P0;const P=minePeriod(MP);const R=P.R;const all=(a.recent||[]).filter(b=>b.fo);
+  const days=[...byDay(all).keys()].slice(0,10).filter(k=>![new Date().toLocaleDateString('sv'),new Date(Date.now()-864e5).toLocaleDateString('sv')].includes(k));
+  const chip=(k,t)=>`<button aria-pressed="${MP===k}" onclick="openMine('${k}')">${t}</button>`;
+  const items=P.items.filter(x=>MP==='all'||x.n).sort((x,y)=>(y.units||0)-(x.units||0));
+  $('pane').innerHTML=`<div class="grab"></div><h1 style="font-size:20px">★ Mano sekami</h1><div class="sub" style="margin-bottom:10px">Tik pažymėti kanalai ir žmonės · ${esc(P.label)}</div>
+  <div class="chips">${MPER.map(([k,t])=>chip(k,t)).join('')}${days.map(k=>chip(k,shortDay(k))).join('')}</div>
+  <div class="grid2" style="margin-bottom:12px"><div class="stat"><b class="${cls(P.units)}">${u(P.units)} vnt.</b><span>pelnas</span></div><div class="stat"><b>${pct(P.hit)}</b><span>pataikymas</span></div>
+  <div class="stat"><b>${P.w}–${P.l}${P.p?'–'+P.p:''}</b><span>laimėta–pralaimėta</span></div><div class="stat"><b>${P.pend||0}</b><span>dar laukia</span></div></div>
+  <div class="card"><h2>Kiekvienas atskirai <span class="sub">${esc(P.label)}</span></h2>${items.length?`<table><tr><th></th><th>Kas</th><th class="n">W–L</th><th class="n">%</th><th class="n">vnt.</th></tr>${items.map(x=>`<tr><td style="width:34px">${starBtn(x.k)}</td><td>${esc(followName(x.k))}</td><td class="n">${x.w}–${x.l}${x.pend?` <span class="sub">+${x.pend}</span>`:''}</td><td class="n">${pct(x.hit)}</td><td class="n ${cls(x.units)}">${u(x.units,1)}</td></tr>`).join('')}</table>`:'<div class="empty">Šiuo laikotarpiu sekami nieko nepaskelbė</div>'}</div>
+  ${MP==='all'||MP==='7'?(R.length?`<div class="card">${dayTableHtml(R,false,'openMine')}</div>`:''):''}
+  ${groupedHtml(R,false,80)||'<div class="card"><div class="empty">Statymų nėra</div></div>'}
   <button class="btn" style="width:100%" onclick="closeSheet()">Uždaryti</button>`;
   $('sheet').classList.add('on')}
 function toGuest(){const g=D&&D.settings&&D.settings.guest_key;if(!g){toast('Svečių prieiga neįjungta');return}
