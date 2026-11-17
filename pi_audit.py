@@ -224,6 +224,20 @@ def _cat(b):
     return f"{sport} · {mk}"
 
 
+def _fkeys(b):
+    """Žvaigždutės raktai, kuriems priklauso statymas: grupė, grupė@rinka, žmogus, žmogus@rinka."""
+    cat, c = _cat(b), b["c"]
+    ks = [f"g:{c}", f"g:{c}@{cat}"]
+    if b.get("u"):
+        ks += [f"m:{c}:{b['u']}", f"m:{c}:{b['u']}@{cat}"]
+    return ks
+
+
+def guest_alias(follow):
+    """Sekamų profilių slapyvardžiai svečiams: „Šaltinis 1“, „Šaltinis 2“… (tikri vardai neatskleidžiami)."""
+    return {k: f"Šaltinis {i + 1}" for i, k in enumerate(sorted(follow))}
+
+
 def _by_cat(bets, min_n=2):
     out = {}
     for b in bets:
@@ -1298,6 +1312,18 @@ Jei tekste atsakymo nėra – {{"found": false}}.
                 f"\n✔ {why}"
             self.notify(title, msg, legs)
             self.d["alerts"] = self.d.get("alerts", 0) + 1
+            gk = next((k for k in _fkeys(b) if k in follow), None)
+            gn = getattr(self, "guest_notify", None)
+            if gk and gn:                                  # svečiams – be šaltinio pavadinimo
+                al = guest_alias(follow).get(gk, "Šaltinis")
+                it = next((x for x in (s.get("mine") or {}).get("items") or [] if x["k"] == gk), None)
+                gst = f"{al}: {it['hit']}% pataikymas, {it['units']:+.1f} vnt. ({it['n']} st.)" \
+                    if it and it.get("hit") is not None else al
+                try:
+                    gn("📢 Naujas signalas", "\n".join(lines) + (f"\nBendras koef. {b['odds']}" if len(legs) > 1 and
+                                                               b.get("odds") else "") + f"\n{gst}", legs)
+                except Exception as e:
+                    self._err(f"svečių pranešimas: {e}")
 
     @staticmethod
     def _ckey(l):
@@ -1663,13 +1689,7 @@ Jei tekste atsakymo nėra – {{"found": false}}.
             series.append([d, round(cum, 2), round(day[d], 2)])
         follow = set(((getattr(self, "settings", None) or {}).get("follow")) or [])
 
-        def fkeys(b):
-            cat, c = _cat(b), b["c"]
-            ks = [f"g:{c}", f"g:{c}@{cat}"]
-            if b.get("u"):
-                ks += [f"m:{c}:{b['u']}", f"m:{c}:{b['u']}@{cat}"]
-            return ks
-
+        fkeys = _fkeys
         fol = lambda b: any(k in follow for k in fkeys(b))
         mine_b = [b for b in bets if fol(b)]
         mine = {"total": _stats(mine_b), "today": _stats([b for b in mine_b if str(b["t"])[:10] == today]),
@@ -1679,6 +1699,7 @@ Jei tekste atsakymo nėra – {{"found": false}}.
         for b in sorted(bets, key=lambda x: x["t"], reverse=True)[:400]:
             recent.append({"t": b["t"], "c": b["c"], "chat": chats.get(b["c"], b["c"]), "who": b.get("un"),
                            "u": str(b["u"]) if b.get("u") else None, "fo": fol(b),
+                           "fk": next((k for k in fkeys(b) if k in follow), None),
                            "status": b["status"], "odds": b.get("odds"), "photo": b.get("photo", False),
                            "mkt": b.get("mkt"), "gm": b.get("grp_mark"), "bg": b.get("by_group", False),
                            "vf": b.get("vf"), "clv": b.get("clv"), "cl": b.get("clv_close"), "cat": _cat(b), "dt": [l.get("doubt") for l in b["legs"] if l.get("doubt")],

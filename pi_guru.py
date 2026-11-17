@@ -576,6 +576,9 @@ try:
 except Exception:
     SETTINGS = {}
 SETTINGS.setdefault("token", secrets.token_urlsafe(12))
+SETTINGS.setdefault("guest_key", secrets.token_urlsafe(9))        # svečių (antras) prisijungimas
+SETTINGS.setdefault("guest_topic", "gs-" + secrets.token_hex(8))  # svečių programėlės kodas (atskira ntfy tema)
+SETTINGS.setdefault("guest_on", True)
 for k, v in {"paused": False, "quiet": False, "quiet_from": "23:00", "quiet_to": "08:00",
              "kwh_price": float(CFG.get("kwh_price", 0.25)),
              "notify_guru": True,          # GURU G⚽AL kanalo signalai
@@ -865,10 +868,23 @@ class Dash(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = self.path.split("?")[0]
+        q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        k = (q.get("k") or [""])[0]
+        owner = secrets.compare_digest(k, SETTINGS["token"])
+        if path in ("/live", "/api") and not owner:
+            return self._send(403, "neleidžiama – atidaryk puslapį iš Raspberry pranešimo", "text/plain; charset=utf-8")
         if path == "/live":
             self._send(200, json.dumps(live_json()), "application/json")
         elif path == "/api":
             self._send(200, json.dumps(api_json(), ensure_ascii=False), "application/json; charset=utf-8")
+        elif path == "/gapi":
+            g = (q.get("g") or [""])[0]
+            if not SETTINGS.get("guest_on") or not secrets.compare_digest(g, SETTINGS["guest_key"]):
+                return self._send(403, "neleidžiama", "text/plain; charset=utf-8")
+            self._send(200, json.dumps(guest_json(), ensure_ascii=False), "application/json; charset=utf-8")
+        elif path == "/guest":
+            f = BASE / "guest.html"
+            self._send(200, f.read_bytes() if f.exists() else "Svetainė ruošiama".encode(), "text/html; charset=utf-8")
         elif path == "/manifest.json":
             self._send(200, json.dumps(MANIFEST), "application/manifest+json")
         elif path == "/icon.svg":
@@ -902,6 +918,11 @@ class Dash(BaseHTTPRequestHandler):
                     SETTINGS["consensus_min"] = min(max(int(body["consensus_min"]), 0), 6)
             except Exception:
                 pass
+            if "guest_on" in body:
+                SETTINGS["guest_on"] = bool(body["guest_on"])
+            if body.get("guest_regen"):                    # naujas svečių kodas – seni svečiai nebeprisijungs
+                SETTINGS["guest_key"] = secrets.token_urlsafe(9)
+                SETTINGS["guest_topic"] = "gs-" + secrets.token_hex(8)
             if isinstance(body.get("follow"), list):
                 SETTINGS["follow"] = [str(x)[:160] for x in body["follow"] if re.fullmatch(r"[gm]:[^\n]{1,150}", str(x))][:300]
             for k in ("quiet_from", "quiet_to"):
@@ -922,6 +943,56 @@ class Dash(BaseHTTPRequestHandler):
             except Exception as e:
                 return self._send(502, f"ntfy: {e}", "text/plain; charset=utf-8")
         self._send(404, "nerasta", "text/plain; charset=utf-8")
+
+
+def guest_link():
+    return f"{STATE['url']}/guest#g={SETTINGS['guest_key']}" if STATE.get("url") else None
+
+
+def _gclean(d):
+    """Rezultato aprašymas svečiams – be šaltinių ir grupių pavadinimų."""
+    d = str(d or "")
+    if re.search(r"(?i)grup|kanal|pažymėj", d):
+        return ""
+    return re.sub(r"\s*\([^)]*\)", "", d)[:90]
+
+
+def guest_json():
+    """Svečių vaizdas: tik ★ sekamų profilių statistika ir signalai, šaltiniai – „Šaltinis 1, 2…“."""
+    a = AUDIT.get("a")
+    s = a.summary() if a else {}
+    follow = sorted(SETTINGS.get("follow") or [])
+    alias = {k: f"Šaltinis {i + 1}" for i, k in enumerate(follow)}
+    keep = ("n", "w", "l", "p", "pend", "units", "hit", "roi")
+    mine = s.get("mine") or {}
+    pick = lambda x: {k: v for k, v in (x or {}).items() if k in keep}
+    bets = []
+    for b in s.get("recent") or []:
+        if not b.get("fo"):
+            continue
+        bets.append({"t": b["t"], "status": b["status"], "odds": b.get("odds"), "src": alias.get(b.get("fk"), "Šaltinis"),
+                     "legs": [{"m": l.get("m"), "pick": l.get("pick"), "st": l.get("st"), "d": _gclean(l.get("d"))}
+                              for l in b.get("legs") or []]})
+        if len(bets) >= 200:
+            break
+    return {"now": now_iso(), "total": pick(mine.get("total")), "today": pick(mine.get("today")),
+            "sources": [dict(name=alias.get(x["k"], "Šaltinis"), **pick(x)) for x in mine.get("items") or []],
+            "bets": bets}
+
+
+def guest_post(title, message, click=None, priority=4, topic=None):
+    topic = topic or SETTINGS.get("guest_topic")
+    if not topic:
+        return
+    body = {"topic": topic, "title": title[:200], "message": message[:3500], "priority": int(priority),
+            "tags": ["moneybag"]}
+    if click:
+        body["click"] = click
+    req = urllib.request.Request(CFG.get("ntfy_server", "https://ntfy.sh").rstrip("/"),
+                                 data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+                                 headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(req, timeout=20):
+        pass
 
 
 def dash_link():
@@ -985,7 +1056,15 @@ def app_beacon():
     """Telefono programėlei: dabartinis puslapio adresas tyliai skelbiamas į atskirą ntfy temą „<tema>-app“
     (jos niekas neprenumeruoja – pranešimų nebus). Programėlė iš ten sužino, kur jungtis, net kai adresas pasikeičia."""
     last, sent = None, 0
+    glast, gsent = None, 0
     while True:
+        try:
+            gl = guest_link() if SETTINGS.get("guest_on") else None
+            if gl and (gl != glast or time.time() - gsent > 4 * 3600):
+                guest_post("guest-app", gl, priority=1, topic=SETTINGS["guest_topic"] + "-app")
+                glast, gsent = gl, time.time()
+        except Exception as e:
+            log.info("svečių programėlės adresas: %s", e)
         try:
             link = dash_link()
             if link and (link != last or time.time() - sent > 4 * 3600):
@@ -1005,7 +1084,7 @@ import hashlib
 UPDATE_URL = CFG.get("update_url") or "https://raw.githubusercontent.com/kziuri14-sudo/guru-pi/main/pi_guru.py"
 
 
-UPDATE_FILES = ("pi_guru.py", "pi_audit.py", "results.py", "props.py", "dash.html", "selftest.py")
+UPDATE_FILES = ("pi_guru.py", "pi_audit.py", "results.py", "props.py", "dash.html", "selftest.py", "guest.html")
 GH_REJECTED = set()                                # versijos, kurių testai nepraėjo – nebandom iš naujo
 
 
@@ -1131,6 +1210,12 @@ async def start_audit(client):
                 log.info("audito pranešimas: %s", e)
         AUDIT["a"].notify = _note
         AUDIT["a"].settings = SETTINGS              # pažymėti žmonės / grupės pranešimams
+
+        def _gnote(title, msg, legs):                 # svečiams – tas pats signalas, be šaltinio
+            if SETTINGS.get("paused") or not SETTINGS.get("guest_on"):
+                return
+            guest_post(title, msg, click=search_link(msg, legs), priority=4)
+        AUDIT["a"].guest_notify = _gnote
         log.info("📈 Grupių auditas paleistas (fone)")
         await AUDIT["a"].run()
     except Exception as e:

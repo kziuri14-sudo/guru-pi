@@ -478,9 +478,37 @@ def followed_stats():
 
 
 @test
+def guest_view_hides_sources():
+    import pi_audit as A
+    from pathlib import Path
+    d = tempfile.mkdtemp()
+    a = A.Auditor(None, {}, logging.getLogger("t"), Path(d), Path(d))
+    a.d["chats"], a.d["kind"] = {"c1": "SlaptasKanalas"}, {"c1": "channel"}
+    owner, guest = [], []
+    a.notify = lambda title, msg, legs: owner.append(title + msg)
+    a.guest_notify = lambda title, msg, legs: guest.append(title + "\n" + msg)
+    a.settings = {"follow": ["g:c1"]}
+    now = datetime.now()
+    kick = (now + timedelta(hours=3)).strftime("%Y-%m-%dT%H:%M")
+    b = {"c": "c1", "mid": 1, "u": "5", "un": "Petras", "t": now.astimezone().isoformat(timespec="minutes"),
+         "status": "pending", "legs": [{"home": "A", "away": "B", "pick": "1", "kickoff": kick}]}
+    a._alert([b])
+    assert owner and guest, (owner, guest)
+    assert "SlaptasKanalas" not in guest[0] and "Petras" not in guest[0] and "Šaltinis 1" in guest[0], guest
+    a.d["bets"] = [b]
+    r = a._summary()["recent"][0]
+    assert r["fo"] and r["fk"] == "g:c1"
+    gp = os.path.join(os.path.dirname(os.path.abspath(__file__)), "guest.html")
+    if not os.path.exists(gp):                                    # pirmas atnaujinimas – failas dar atsiųs
+        return
+    h = open(gp, encoding="utf-8").read()
+    assert "/gapi?g=" in h and "b.chat" not in h and "b.who" not in h and "class=\"t blur\"" in h
+
+
+@test
 def dashboard_has_required_parts():
     h = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "dash.html"), encoding="utf-8").read()
-    for x in ("fetch('/api'", "id=\"dayTable\"", "id=\"homeDays\"", "id=\"sigCard\"", "Powered by SportScore",
+    for x in ("fetch('/api?k=", "id=\"dayTable\"", "id=\"g_code\"", "id=\"homeDays\"", "id=\"sigCard\"", "Powered by SportScore",
               "function renderBets", "post('/settings'", "toggleFollow", "id=\"n_guru\"", "Nariai – kas pataiko", "function openMine", "data-st=\"fo\""):
         assert x in h, x
 

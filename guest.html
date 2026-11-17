@@ -1,0 +1,84 @@
+<!doctype html><html lang="lt"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Signalai</title><meta name="theme-color" content="#0b0d12">
+<style>
+:root{--bg:#f4f5f7;--card:#fff;--fg:#0f1419;--mut:#6b7280;--line:#e7e9ee;--soft:#f0f2f5;--acc:#4f46e5;--good:#16a34a;--bad:#dc2626;--warn:#d97706;
+--goodbg:#e8f6ed;--badbg:#fdecec;--warnbg:#fdf3e2;--sh:0 1px 2px rgba(16,24,40,.04),0 2px 8px rgba(16,24,40,.05);color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#0b0d12;--card:#151821;--fg:#eef0f4;--mut:#9aa1ad;--line:#232733;--soft:#1c2029;--acc:#8b85ff;--good:#34d399;--bad:#f87171;--warn:#fbbf24;
+--goodbg:#10291f;--badbg:#2e1517;--warnbg:#2c2210;--sh:none;color-scheme:dark}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;
+padding:max(16px,env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom))}
+.wrap{max-width:620px;margin:0 auto}header{display:flex;justify-content:space-between;align-items:center;margin:4px 0 14px}
+h1{font-size:22px;margin:0;letter-spacing:-.02em}.sub{color:var(--mut);font-size:13px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--good);display:inline-block;margin-right:6px}.dot.off{background:var(--bad)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin:0 0 12px;box-shadow:var(--sh)}
+.card h2{font-size:13px;font-weight:600;color:var(--mut);margin:0 0 10px;display:flex;justify-content:space-between;gap:8px}
+.big{font-size:40px;font-weight:700;letter-spacing:-.03em;font-variant-numeric:tabular-nums}.pos{color:var(--good)}.neg{color:var(--bad)}
+.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}.kpi{background:var(--soft);border-radius:12px;padding:10px}
+.kpi b{display:block;font-size:18px;font-variant-numeric:tabular-nums}.kpi span{font-size:12px;color:var(--mut)}
+.row{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid var(--line)}.row:first-of-type{border-top:0}
+.main{flex:1;min-width:0}.t{font-weight:600}.r{text-align:right;font-weight:700;font-variant-numeric:tabular-nums}.r small{display:block;color:var(--mut);font-weight:500;font-size:12px}
+.blur{filter:blur(6px);user-select:none;-webkit-user-select:none;pointer-events:none;color:var(--fg)}
+.lock{font-size:12px;color:var(--mut)}
+.chip{display:inline-block;font-size:11.5px;font-weight:600;padding:3px 8px;border-radius:99px;white-space:nowrap}
+.c-won{background:var(--goodbg);color:var(--good)}.c-lost{background:var(--badbg);color:var(--bad)}.c-pending{background:var(--warnbg);color:var(--warn)}
+.c-push,.c-unknown{background:var(--soft);color:var(--mut)}
+.bet{padding:12px 0;border-top:1px solid var(--line)}.bet:first-of-type{border-top:0}
+.top{display:flex;justify-content:space-between;gap:10px;align-items:center}.leg{margin-top:6px}.leg .pk{color:var(--mut)}
+.src{font-size:12px;color:var(--mut);display:flex;gap:6px;align-items:center}
+.seg{display:inline-flex;background:var(--soft);border-radius:10px;padding:3px;gap:2px;margin-bottom:10px}
+.seg button{font:inherit;font-size:13px;font-weight:600;border:0;background:transparent;color:var(--mut);padding:6px 12px;border-radius:8px}
+.seg button[aria-pressed=true]{background:var(--card);color:var(--fg);box-shadow:var(--sh)}
+table{width:100%;border-collapse:collapse;font-size:14px}th,td{padding:8px 4px;border-top:1px solid var(--line);text-align:left}th{font-size:12px;color:var(--mut);border-top:0}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+.locked{position:relative;overflow:hidden}.locked .inner{filter:blur(7px);user-select:none;pointer-events:none}
+.locked .ov{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-weight:600;background:color-mix(in srgb,var(--card) 35%,transparent)}
+.empty{color:var(--mut);text-align:center;padding:20px 8px}
+</style></head><body><div class="wrap">
+<header><div><h1>Signalai</h1><div class="sub" id="d"></div></div><div class="sub"><span class="dot" id="dot"></span><span id="st">jungiamasi…</span></div></header>
+<div class="card"><h2><span>Pelnas nuo pradžios</span><span id="pend"></span></h2>
+  <div class="big" id="u">–</div><div class="sub">vienetų, statant po 1 vnt. kiekvienam signalui</div>
+  <div class="kpis"><div class="kpi"><b id="wl">–</b><span>laimėta / pral.</span></div><div class="kpi"><b id="h">–</b><span>pataikymas</span></div><div class="kpi"><b id="td">–</b><span>šiandien</span></div></div></div>
+<div class="card"><h2><span>Signalai</span></h2>
+  <div class="seg"><button data-v="act" aria-pressed="true">Aktyvūs</button><button data-v="res">Rezultatai</button></div>
+  <div id="bets"></div></div>
+<div class="card"><h2><span>Šaltiniai</span><span class="lock">🔒 vardai paslėpti</span></h2><div id="src"></div></div>
+<div class="card" id="days"></div>
+<div class="card locked"><div class="inner"><h2><span>Visa analitika</span></h2>
+  <div class="row"><div class="main"><div class="t">Grupių reitingas</div><div class="sub">pataikymas · pelnas · CLV</div></div><div class="r">+12.4</div></div>
+  <div class="row"><div class="main"><div class="t">Kas pataiko pokalbiuose</div><div class="sub">nariai · rinkos</div></div><div class="r">71 %</div></div></div>
+  <div class="ov">🔒<span>Prieinama tik savininkui</span></div></div>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const m=location.hash.match(/g=([^&]+)/);let G=m?m[1]:null;try{if(G)localStorage.setItem('g',G);else G=localStorage.getItem('g')}catch(e){}
+const u=(x,d=2)=>x==null?'–':(x>0?'+':'')+(+x).toFixed(d);const cls=x=>x>0?'pos':x<0?'neg':'';const pct=x=>x==null?'–':Math.round(x)+' %';
+const ST={won:'Laimėta',lost:'Pralaimėta',push:'Grąžinta',pending:'Laukia',unknown:'Nežinoma'};
+const FAKE=['██████ ██████','████ ████████','███████ ███','█████ ██████'];
+let D=null,V='act';
+const dk=b=>String(b.t).slice(0,10);
+function dayLabel(k){const t=new Date().toLocaleDateString('sv'),y=new Date(Date.now()-864e5).toLocaleDateString('sv');
+  return k===t?'Šiandien':k===y?'Vakar':new Date(k+'T12:00').toLocaleDateString('lt',{weekday:'short',month:'2-digit',day:'2-digit'})}
+function sum(L){let w=0,l=0,un=0,p=0;for(const b of L){const o=+b.odds||0;if(b.status==='won'){w++;if(o>1.01)un+=o-1}else if(b.status==='lost'){l++;if(o>1.01)un-=1}else if(b.status==='pending')p++}return{w,l,un,p}}
+function betHtml(b){const when=new Date(b.t).toLocaleString('lt',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+  return `<div class="bet"><div class="top"><div class="src">🔒 ${esc(b.src)} · ${when}</div><span class="chip c-${b.status}">${ST[b.status]||b.status}</span></div>
+  ${b.legs.map(l=>`<div class="leg"><b>${esc(l.m)}</b> <span class="pk">· ${esc(l.pick)}</span>${l.d&&b.status!=='pending'?`<div class="sub">${esc(l.d)}</div>`:''}</div>`).join('')}
+  ${b.odds?`<div class="sub">koef. ${esc(b.odds)}</div>`:''}</div>`}
+function render(){if(!D)return;const t=D.total||{},td=D.today||{};
+  $('d').textContent=new Date().toLocaleDateString('lt',{weekday:'long',month:'long',day:'numeric'});
+  $('u').textContent=u(t.units);$('u').className='big '+cls(t.units);$('wl').textContent=`${t.w||0} / ${t.l||0}`;$('h').textContent=pct(t.hit);
+  $('td').textContent=`${td.w||0}–${td.l||0}`;$('pend').textContent=t.pend?`laukia ${t.pend}`:'';
+  const B=D.bets||[];const L=V==='act'?B.filter(b=>b.status==='pending'):B.filter(b=>b.status!=='pending');
+  let out='',last=null;for(const b of L.slice(0,120)){const k=dk(b);if(k!==last){out+=`<div class="sub" style="margin:10px 0 2px;font-weight:600">${dayLabel(k)}</div>`;last=k}out+=betHtml(b)}
+  $('bets').innerHTML=out||`<div class="empty">${V==='act'?'Šiuo metu aktyvių signalų nėra':'Rezultatų dar nėra'}</div>`;
+  $('src').innerHTML=(D.sources||[]).map((s,i)=>`<div class="row"><div class="main"><div class="t blur">${FAKE[i%FAKE.length]}</div><div class="sub">${esc(s.name)} · ${s.w||0}–${s.l||0}${s.pend?' · laukia '+s.pend:''}</div></div><div class="r ${cls(s.units)}">${u(s.units,1)}<small>${pct(s.hit)}</small></div></div>`).join('')||'<div class="empty">Šaltinių dar nėra</div>';
+  const M=new Map();B.filter(b=>b.status!=='pending').forEach(b=>{const k=dk(b);if(!M.has(k))M.set(k,[]);M.get(k).push(b)});
+  $('days').innerHTML=M.size?`<h2><span>Pelnas pagal dienas</span></h2><table><tr><th>Diena</th><th class="n">W–L</th><th class="n">vnt.</th></tr>${[...M].slice(0,14).map(([k,a])=>{const s=sum(a);return `<tr><td>${dayLabel(k)}</td><td class="n">${s.w}–${s.l}</td><td class="n ${cls(s.un)}">${u(s.un)}</td></tr>`}).join('')}</table>`:'';
+  $('days').style.display=M.size?'':'none'}
+async function load(){if(!G){$('st').textContent='nėra prieigos';$('dot').className='dot off';return}
+  try{const r=await fetch('/gapi?g='+encodeURIComponent(G),{cache:'no-store'});if(!r.ok)throw new Error(r.status);D=await r.json();$('dot').className='dot';$('st').textContent='prisijungta';render()}
+  catch(e){$('dot').className='dot off';$('st').textContent='nėra ryšio'}}
+document.querySelectorAll('.seg button').forEach(b=>b.onclick=()=>{V=b.dataset.v;document.querySelectorAll('.seg button').forEach(x=>x.setAttribute('aria-pressed',x===b));render()});
+load();setInterval(load,30000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)load()});
+</script></body></html>

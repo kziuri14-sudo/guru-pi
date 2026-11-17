@@ -139,6 +139,13 @@ th{font-size:12px;color:var(--mut);font-weight:600;border-top:0}td.n,th.n{text-a
     <label>Ir apie nepažymėtas, bet patikimas (⭐) grupes <input type="checkbox" id="n_auto"></label>
     <div class="sub">Pranešimus gausi tik iš grupių ir žmonių, pažymėtų ★ (skiltis „Grupės“ → paspausk grupę → ★ prie žmogaus).</div>
     <div id="followList"></div></div></div>
+  <div class="card"><h2>Svečių prieiga</h2><div class="set">
+    <label>Įjungta <input type="checkbox" id="g_on"></label>
+    <div class="sub">Svečiai mato tik tavo ★ sekamų profilių statistiką ir signalus. Iš ko – nerodoma („Šaltinis 1, 2…“), vardai užblurinti, kita analitika užrakinta.</div>
+    <div class="sub">Svečias įsidiegia tą pačią programėlę (guru.apk) ir įveda šį kodą:</div>
+    <div style="display:flex;gap:8px;align-items:center"><code id="g_code" style="flex:1;font-size:15px;padding:10px;background:var(--soft);border-radius:10px;word-break:break-all">–</code><button class="btn" id="g_copy">Kopijuoti</button></div>
+    <div class="sub">Pranešimus apie naujus signalus svečias gaus ntfy programėlėje užsiprenumeravęs tą patį kodą.</div>
+    <button class="btn" id="g_new">Pakeisti kodą (seni svečiai nebeprisijungs)</button></div></div>
   <div class="card"><h2>Nustatymai</h2><div class="set" id="set">
     <label>Pranešimai sustabdyti <input type="checkbox" id="s_paused"></label>
     <label>Tylios valandos <input type="checkbox" id="s_quiet"></label>
@@ -307,17 +314,22 @@ function renderMore(){const c=D.current||{},en=D.energy||{},a=D.audit||{};
   $('srcList').innerHTML=src.map(([n,v])=>`<div class="row" style="cursor:default"><div class="main"><div class="t">${n}</div><div class="s">${esc(v||'–')}</div></div></div>`).join('');
   const sig=(D.events||[]).filter(e=>e.kind==='signal').slice(-15).reverse();
   $('sigList').innerHTML=sig.map(e=>`<div class="row" style="cursor:default"><div class="main"><div class="t">${esc((e.text||'').split('\n')[0])}</div><div class="s">${esc((e.text||'').split('\n').slice(1).join(' · '))}</div></div><div class="r"><small>${new Date(e.t).toLocaleString('lt',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}</small>${e.link?`<a class="link" href="${esc(e.link)}" target="_blank" rel="noopener">Atidaryti</a>`:''}</div></div>`).join('')||'<div class="empty">Signalų dar nebuvo</div>';
+  const sG=D.settings||{};$('g_on').checked=sG.guest_on!==false;$('g_code').textContent=sG.guest_topic||'–';
   const sN=D.settings||{};$('n_guru').checked=sN.notify_guru!==false;$('n_auto').checked=!!sN.auto_proven;
   const fl=[...follows()];$('followList').innerHTML=fl.length?fl.map(k=>`<div class="row" style="cursor:default">${starBtn(k)}<div class="main"><div class="t">${esc(followName(k))}</div><div class="s">${k[0]==='g'?'visa grupė':'žmogus'}</div></div></div>`).join(''):'<div class="sub">Dar nieko nepažymėta.</div>';
   const s=D.settings||{};if(!$('set').contains(document.activeElement)){$('s_paused').checked=!!s.paused;$('s_quiet').checked=!!s.quiet;$('s_qf').value=s.quiet_from||'23:00';$('s_qt').value=s.quiet_to||'08:00';$('s_price').value=s.kwh_price??0.25}
   $('setnote').textContent=K?'':'Keisti galima tik atidarius puslapį iš Raspberry pranešimo nuorodos.';['b_save','b_test'].forEach(i=>$(i).disabled=!K)}
 function render(){if(!D)return;const v=view();$('hdate').textContent=new Date().toLocaleDateString('lt',{weekday:'long',month:'long',day:'numeric'});
   try{if(v==='grupes')renderGroups();else if(v==='statymai')renderBets();else if(v==='daugiau')renderMore();else renderHome()}catch(e){console.error(e)}}
-async function full(){try{const r=await fetch('/api',{cache:'no-store'});D=await r.json();$('dot').className='dot';$('stxt').textContent='Raspberry veikia';render()}catch(e){$('dot').className='dot off';$('stxt').textContent='nėra ryšio'}}
-async function live(){if(view()!=='daugiau')return;try{const p=await (await fetch('/live',{cache:'no-store'})).json();$('rCpu').textContent=Math.round(p.cpu)+' %';$('rW').textContent=p.w.toFixed(2)+' W';$('rTemp').textContent=p.temp.toFixed(1)+' °C'}catch(e){}}
+async function full(){try{const r=await fetch('/api?k='+encodeURIComponent(K||''),{cache:'no-store'});D=await r.json();$('dot').className='dot';$('stxt').textContent='Raspberry veikia';render()}catch(e){$('dot').className='dot off';$('stxt').textContent='nėra ryšio'}}
+async function live(){if(view()!=='daugiau')return;try{const p=await (await fetch('/live?k='+encodeURIComponent(K||''),{cache:'no-store'})).json();$('rCpu').textContent=Math.round(p.cpu)+' %';$('rW').textContent=p.w.toFixed(2)+' W';$('rTemp').textContent=p.temp.toFixed(1)+' °C'}catch(e){}}
 async function post(path,body){const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...body,k:K})});if(!r.ok)throw new Error(await r.text());return r.json()}
 $('b_save').onclick=async()=>{try{await post('/settings',{paused:$('s_paused').checked,quiet:$('s_quiet').checked,quiet_from:$('s_qf').value,quiet_to:$('s_qt').value,kwh_price:+$('s_price').value});toast('Išsaugota');full()}catch(e){toast('Nepavyko: '+e.message)}};
 $('n_guru').onchange=e=>saveNotify({notify_guru:e.target.checked}).then(ok=>ok&&toast('Išsaugota'));
+$('g_on').onchange=e=>saveNotify({guest_on:e.target.checked}).then(ok=>ok&&toast(e.target.checked?'Svečiai įjungti':'Svečiai išjungti'));
+$('g_copy').onclick=()=>{const t=$('g_code').textContent;try{navigator.clipboard.writeText(t);toast('Nukopijuota')}catch(e){toast(t)}};
+let gNew=0;$('g_new').onclick=async()=>{if(Date.now()-gNew>4000){gNew=Date.now();toast('Paspausk dar kartą, kad patvirtintum');return}
+  if(await saveNotify({guest_regen:true})){toast('Naujas kodas sukurtas');full()}};
 $('n_auto').onchange=e=>saveNotify({auto_proven:e.target.checked}).then(ok=>ok&&toast('Išsaugota'));
 $('b_test').onclick=async()=>{try{await post('/test',{});toast('Išsiųsta – patikrink telefoną')}catch(e){toast('Nepavyko: '+e.message)}};
 document.querySelectorAll('#perSeg button').forEach(b=>b.onclick=()=>{PER=b.dataset.per;try{localStorage.setItem('per',PER)}catch(e){}render()});
