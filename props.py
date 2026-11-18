@@ -2034,6 +2034,14 @@ def _es_split(name):
     return (m.group(1).strip(), m.group(2).strip().lower()) if m else (str(name or "").strip(), None)
 
 
+def _es_res(lg):
+    return "/resultados" if lg == "gtleagues" else f"/resultados/{lg}"     # GT Leagues – be lygos kelio
+
+
+def _es_h2h(lg):
+    return "/h2h/" if lg == "gtleagues" else f"/h2h/{lg}/"
+
+
 def _es_html(path, ttl):
     hit = _c.get(path)
     if hit and time.time() - hit[0] < ttl:
@@ -2135,7 +2143,7 @@ def esoccer_prefetch():
         return
     ES_STATE["pf"] = time.time()
     for lg in ES_LEAGUES:
-        h = _es_html(f"/resultados/{lg}?lang=en", ttl=600)
+        h = _es_html(f"{_es_res(lg)}?lang=en", ttl=600)
         if h:
             _es_add(_es_rows(h, lg))
     _es_save()
@@ -2153,13 +2161,13 @@ def esoccer_event(leg):
     for d in sorted({c.date(), k.date()}):                # tos dienos vakaro rezultatai (paskutinės 50 kiekvienoje lygoje)
         old = d < date.today()
         for lg in ES_LEAGUES:
-            h = _es_html(f"/resultados/{lg}?lang=en&mes={d:%Y-%m}&dia={d:%Y-%m-%d}", ttl=86400 if old else 900)
+            h = _es_html(f"{_es_res(lg)}?lang=en&mes={d:%Y-%m}&dia={d:%Y-%m-%d}", ttl=86400 if old else 900)
             if h:
                 rows += _es_rows(h, lg)
     if n1 and n2:                                         # abu slapyvardžiai – visa jų tarpusavio istorija
         a, b = sorted([n1, n2])
         for lg in ES_LEAGUES:
-            h = _es_html(f"/h2h/{lg}/{urllib.parse.quote(a)}-vs-{urllib.parse.quote(b)}?lang=en", ttl=1800)
+            h = _es_html(f"{_es_h2h(lg)}{urllib.parse.quote(a)}-vs-{urllib.parse.quote(b)}?lang=en", ttl=1800)
             if h:
                 rows += _es_rows(h, lg)
     _es_add([r for r in rows if r[7] is not None])
@@ -2181,6 +2189,12 @@ def esoccer_event(leg):
             cands[(lg, p1, p2, t1, t2, s1, s2, t or d)] = (r, sw)
     if not cands:
         return None
+    if not (n1 or n2):                                    # be slapyvardžių: ar matėm VISŲ lygų rezultatus tuo laiku?
+        ws, we = c - timedelta(minutes=20), c + timedelta(hours=1.5)
+        for lg in ES_LEAGUES:
+            ts = [r[7] for r in rows if r[0] == lg and r[7] is not None and r[8] == c.date()]
+            if ts and min(ts) > ws and max(ts) >= ws:
+                return None                               # šios lygos to laiko rezultatų nematėm – galėjo būti kitos
     timed = [v for v in cands.values() if v[0][7] is not None]
     pool = timed or list(cands.values())
     if len(pool) > 1:

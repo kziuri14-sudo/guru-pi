@@ -585,6 +585,11 @@ def esoccer_bettrails():
         assert (e2["Tr1"], e2["Tr2"]) == (3, 2), e2
         leg2 = {"sport": "esports", "home": "Juventus", "away": "Arsenal", "pick": "Over 6.5", "side": "Over",
                 "line": 6.5, "kickoff": "2026-11-17T21:42", "created": "2026-11-17T21:42"}
+        assert P.esoccer_event(leg2) is None                       # nematėm, kas vyko prieš 21:44 – gal kitos rungtynės
+        early = day.replace("zaroth-arkon@", "x@").replace("Juventus", "Chelsea").replace("Arsenal", "Everton") \
+                   .replace("2026-11-17T20:44", "2026-11-17T20:00")
+        P._es_html = lambda path, ttl: h2h if "/h2h/valhalla/dzen-vs-kovboj" in path else \
+            day + early if "/resultados/valhalla" in path and "2026-11-17" in path else ""
         e = P.esoccer_event(leg2)                                   # 20:44 CET = 21:44 Vilniuje
         assert e and (e["Tr1"], e["Tr2"]) == (5, 3) and st(R.evaluate(leg2, e)) == "won", e
         tried = []
