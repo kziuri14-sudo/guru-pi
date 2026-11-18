@@ -506,6 +506,56 @@ def guest_view_hides_sources():
 
 
 @test
+def fuzzy_team_names():
+    # Al Adalh (rašybos klaida) – Al Orobah Al Jawf ↔ 365Scores „Al-Adalah“ – „Al Oruba“ (2026-11-18, 3:3)
+    assert P._pair({"home": "Al Adalh", "away": "Al Orobah Al Jawf"}, ["Al-Adalah"], ["Al Oruba"]) == (True, False)
+    assert P._pair({"home": "Al Orobah Al Jawf", "away": "Al Adalh"}, ["Al-Adalah"], ["Al Oruba"]) == (True, True)
+    assert P._pair({"home": "Hapoel Tel Aviv", "away": "Maccabi Haifa"}, ["Hapoel Haifa"], ["Maccabi Tel Aviv"])[0] is False
+    assert not R.fuzzy_same("Manchester United", "Manchester City") and not R.fuzzy_same("Lyon", "Lens")
+    og = P._get
+    g = {"games": [{"id": 1, "startTime": "2026-11-18T16:30:00+02:00", "statusText": "Ended",
+                    "competitionDisplayName": "First Division", "homeCompetitor": {"id": 1, "name": "Al-Adalah", "score": 3},
+                    "awayCompetitor": {"id": 2, "name": "Al Oruba", "score": 3}}]}
+    P._get = lambda url, ttl=0: g if "allscores" in url and "sports=1" in url and "18/11/2026" in url else {"games": []}
+    try:
+        leg = {"home": "Al Adalh", "away": "Al Orobah Al Jawf", "sport": "soccer", "kickoff": "2026-11-18T16:30",
+               "created": "2026-11-18T16:39", "pick": "Under 3.5 goals", "side": "Under", "line": 3.5}
+        e = P.s365_event(leg)
+        assert e and (e["Tr1"], e["Tr2"]) == (3, 3), e
+        assert st(R.evaluate(leg, e)) == "lost"
+    finally:
+        P._get = og
+
+
+@test
+def uniquetma_card_and_result():
+    og, oa = P._get, P.AI
+    prev = {"date": "2026-11-18T18:03:35", "link": "u1", "title": {"rendered": "UTMA RISING 4 atkeliauja į Akropolį"},
+            "content": {"rendered": "<p>Lapkričio 25 d. vėl įvyks UTMA RISING 4. Susitiks Rokas Kiulis ir Ričards Ozols.</p>"}}
+    res = {"date": "2026-11-26T09:00:00", "link": "u2", "title": {"rendered": "UTMA RISING 4: R. Kiulis nugalėjo R. Ozolą"},
+           "content": {"rendered": "<p>Rokas Kiulis teisėjų sprendimu nugalėjo Ričardą Ozolą.</p>"}}
+    posts = [prev]
+    P._get = lambda url, ttl=0: posts if "uniquetma.com/wp-json" in url and "search=kiul" in url else []
+    P.AI = lambda prompt: {"found": True, "winner": "Kiulis", "method": "sprendimu",
+                           "evidence": "Rokas Kiulis teisėjų sprendimu nugalėjo Ričardą Ozolą."}
+    try:
+        leg = {"sport": "mma", "home": "Rokas Kiulis", "away": "Ričards Ozols", "kickoff": "2026-11-18T15:50",
+               "created": "2026-11-18T15:50", "pick": "Rokas Kiulis", "side": "Win", "team": "Rokas Kiulis"}
+        P._c.clear() if hasattr(P, "_c") else None
+        e = P.uniquetma_event(leg)
+        assert e and e["Eps"] == "NS" and e["_start"].strftime("%m-%d") == "11-25" and "RISING 4" in e["_league"], e
+        posts.append(res)
+        e = P.uniquetma_event(leg)
+        assert e and e["Eps"] == "FT" and e["Ewt"] == 1, e
+        assert st(R.evaluate(leg, e)) == "won"
+        assert st(R.evaluate(dict(leg, team="Ričards Ozols", pick="Ričards Ozols"), e)) == "lost"
+        P.AI = lambda prompt: {"found": True, "winner": "Kiulis", "evidence": "išgalvota citata, kurios nėra"}
+        assert P.uniquetma_event(leg)["Eps"] == "NS"                  # AI citatos tekste nėra – netikim
+    finally:
+        P._get, P.AI = og, oa
+
+
+@test
 def dashboard_has_required_parts():
     h = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "dash.html"), encoding="utf-8").read()
     for x in ("fetch('/api?k=", "id=\"dayTable\"", "id=\"g_code\"", "id=\"homeDays\"", "id=\"sigCard\"", "Powered by SportScore",

@@ -67,6 +67,12 @@ def _pair(leg, n1, n2):
         return True, False
     if _team_ok(h, n2) and (not a or _team_ok(a, n1)):
         return True, True
+    if h and a:                                   # rašybos klaida / kita transliteracija – tik kai panašios ABI komandos
+        fz = lambda s, ns: any(R.fuzzy_same(s, n) for n in ns if n)
+        if fz(h, n1) and fz(a, n2):
+            return True, False
+        if fz(h, n2) and fz(a, n1):
+            return True, True
     return False, False
 
 
@@ -1858,3 +1864,135 @@ def utma_event(leg):
         e.update({"Tr1": 1 if w == "h" else 0, "Tr2": 1 if w == "a" else 0, "Eps": "FT", "Ewt": 1 if w == "h" else 2})
         return e
     return None
+
+
+# ---------------------------------------------------------------- UniqueTMA (uniquetma.com – UTMA ir UTMA RISING)
+# Oficiali UTMA svetainė (WordPress): kovų sąrašai (data, turnyras) ir rezultatų straipsniai.
+# Naudojama vieša WordPress paieška /wp-json/wp/v2/posts – be jokių apeidinėjimų.
+UTMA_WP = "https://uniquetma.com/wp-json/wp/v2/posts?search={q}&per_page=10&_fields=date,link,title,content"
+UNIQ_STATE = {"last": "", "off_until": 0}
+AI = None                                                  # Raspberry priskiria: AI(prompt) -> dict (Groq)
+_LT_MON_G = {"sausio": 1, "vasario": 2, "kovo": 3, "balandžio": 4, "gegužės": 5, "birželio": 6, "liepos": 7,
+             "rugpjūčio": 8, "rugsėjo": 9, "spalio": 10, "lapkričio": 11, "gruodžio": 12}
+_EN_MON = {m: i + 1 for i, m in enumerate(("january", "february", "march", "april", "may", "june", "july", "august",
+                                           "september", "october", "november", "december"))}
+_WIN_LT = r"nugalėj|įveik|pranok|sudoroj|nokautav|iškovoj\w* pergal|triumfav|palaužė|parklupd|defeat|won|beat"
+
+
+def _stem(name):
+    """Pavardės kamienas be galūnės (Kiulis → kiul, Buinickas → buinick, Ozols → ozol) – randa ir linksniuotą."""
+    w = [x for x in _fold(re.sub(r"\(.*?\)", "", name or "")).split() if len(x) >= 3]
+    if not w:
+        return None
+    s = w[-1]
+    return s[:-2] if len(s) >= 6 else s[:-1] if len(s) == 5 else s
+
+
+def _uniq_posts(q):
+    if time.time() < UNIQ_STATE["off_until"]:
+        return None
+    try:
+        data = _get(UTMA_WP.format(q=urllib.parse.quote(q)), ttl=3 * 3600)
+    except Exception as e:
+        UNIQ_STATE["last"] = type(e).__name__
+        if "HTTP Error 4" in str(e) or "HTTP Error 5" in str(e):
+            UNIQ_STATE["off_until"] = time.time() + 3600
+        return None
+    UNIQ_STATE["last"] = "ok"
+    out = []
+    for p in data if isinstance(data, list) else []:
+        txt = html.unescape(re.sub(r"<[^>]+>", " ", (p.get("content") or {}).get("rendered") or ""))
+        title = html.unescape(re.sub(r"<[^>]+>", " ", (p.get("title") or {}).get("rendered") or ""))
+        try:
+            pd = datetime.fromisoformat(str(p.get("date"))[:19])
+        except Exception:
+            continue
+        out.append((pd, title, re.sub(r"\s+", " ", txt), p.get("link") or ""))
+    return out
+
+
+def _uniq_date(text, posted):
+    """Turnyro data iš straipsnio („lapkričio 25 d.“, „November 28“) – artimiausia po paskelbimo."""
+    best = None
+    for m in re.finditer(r"(sausio|vasario|kovo|balandžio|gegužės|birželio|liepos|rugpjūčio|rugsėjo|spalio|lapkričio|"
+                         r"gruodžio)\s+(\d{1,2})\s*d\b|\b(january|february|march|april|may|june|july|august|september|"
+                         r"october|november|december)\s+(\d{1,2})\b", text, re.I):
+        mon = _LT_MON_G.get((m.group(1) or "").lower()) or _EN_MON.get((m.group(3) or "").lower())
+        day_ = int(m.group(2) or m.group(4))
+        for y in (posted.year, posted.year + 1):
+            try:
+                d = date(y, mon, day_)
+            except ValueError:
+                continue
+            if posted.date() - timedelta(days=1) <= d <= posted.date() + timedelta(days=120):
+                if best is None or d < best:
+                    best = d
+                break
+    return best
+
+
+def _uniq_event_name(text):
+    m = re.search(r"UTMA\s+RISING\s*\d+|UTMA\s*\d+", text, re.I)
+    return re.sub(r"\s+", " ", m.group(0).upper()) if m else "UTMA"
+
+
+def uniquetma_event(leg):
+    """UTMA / UTMA RISING kova iš uniquetma.com: kovos data (kol neįvyko) ir rezultatas (iš rezultatų straipsnio)."""
+    sp = _fold(f"{leg.get('sport')} {leg.get('league')} {leg.get('pick')}")
+    if not re.search(r"\bmma\b|utma|fight|kov\w*|box|boks|kick|kikbok|k 1|muay", sp):
+        return None
+    h, a = _stem(leg.get("home")), _stem(leg.get("away"))
+    if not h or not a or len(h) < 3 or len(a) < 3:
+        return None
+    k, c = _when(leg)
+    posts = _uniq_posts(h)
+    if posts is None:
+        return None
+    both = [(pd, t, x, u) for pd, t, x, u in posts
+            if h in _fold(t + " " + x) and a in _fold(t + " " + x)]
+    if not both:
+        return None
+    both.sort(key=lambda p: p[0])
+    win = None
+    for pd, title, txt, url in reversed(both):            # naujausias pirmiau – rezultatų straipsnis
+        if pd < c - timedelta(days=2):
+            continue
+        sents = [s for s in re.split(r"(?<=[.!?])\s+", title + ". " + txt)
+                 if h in _fold(s) and a in _fold(s) and re.search(_WIN_LT, s, re.I)]
+        if not sents:
+            continue
+        r = None
+        if AI:
+            try:
+                r = AI("Iš šių sakinių (oficiali UTMA svetainė) nustatyk, kas laimėjo kovą tarp "
+                       f"{leg.get('home')} ir {leg.get('away')}. Jei kova dar neįvyko arba neaišku – "
+                       '{"found": false}. Grąžink TIK JSON: {"found": true, "winner": "laimėtojo pavardė", '
+                       '"method": "KO/TKO/sprendimu/pasidavimu arba null", "evidence": "tiksli citata"}\n\n' +
+                       "\n".join(sents[:6])[:3000])
+            except Exception:
+                r = None
+        if isinstance(r, dict) and r.get("found") and r.get("winner"):
+            wn = _fold(r.get("winner"))
+            ev = _fold(r.get("evidence") or "")
+            if ev and ev[:40] not in _fold(" ".join(sents)):
+                continue                                  # citatos tekste nėra – AI spėjo, netikim
+            if h in wn and a not in wn:
+                win = ("h", r.get("method"), pd, title, url)
+            elif a in wn and h not in wn:
+                win = ("a", r.get("method"), pd, title, url)
+        if win:
+            break
+    pd0, title0, txt0, url0 = both[-1]
+    when = _uniq_date(title0 + " " + txt0, pd0)
+    t = datetime.combine(when, datetime.min.time()) + timedelta(hours=18) if when else k
+    e = {"_t1": leg.get("home"), "_t2": leg.get("away"), "_sport": "mma", "_swapped": False, "_start": t,
+         "_league": f"uniquetma.com, {_uniq_event_name(title0 + ' ' + txt0)}" + (f" {when:%m-%d}" if when else "")}
+    if not win:
+        if when and when < c.date() - timedelta(days=2):
+            return None                                   # sena kova (ne ta) – kitas kartas
+        e["Eps"] = "NS"
+        return e
+    w, meth, pd, title, url = win
+    e.update({"Tr1": 1 if w == "h" else 0, "Tr2": 1 if w == "a" else 0, "Eps": "FT", "Ewt": 1 if w == "h" else 2,
+              "_start": min(t, pd), "_league": f"uniquetma.com, {_uniq_event_name(title)}{', ' + meth if meth else ''}"})
+    return e

@@ -675,6 +675,7 @@ class Auditor:
             props.WEB_STAT = self.web_stat
             props.CFG = cfg                               # tas pats žodynas – raktas įsigalioja iškart
             props.CACHE_DIR = base
+            props.AI = lambda prompt: (lambda r: r if isinstance(r, dict) else None)(groq_json(self.cfg, prompt, self.log))
 
     # ------------------------------------------------------------------ saugojimas
     def _insert(self, items):
@@ -1001,8 +1002,10 @@ Jei žaidėjas nežaidė – "played": false. Jei patikimo šaltinio neradai –
         if self.d.get("gweb_none", 0) > time.time():
             return None                                   # šio rakto Groq paieškos modelio nėra
         _groq_models(key, False, self.cfg, self.log)
-        ids = [m for m in _GROQ_M["ids"] if "compound" in m] or ["groq/compound", "groq/compound-mini"]
-        for model in ids[:2]:
+        ids = [m for m in _GROQ_M["ids"] if "compound" in m]
+        ids += [m for m in ("groq/compound", "groq/compound-mini", "compound-beta", "compound-beta-mini") if m not in ids]
+        n404 = 0
+        for model in ids[:4]:
             body = json.dumps({"model": model, "messages": [{"role": "user", "content": prompt}],
                                "temperature": 0}).encode()
             req = urllib.request.Request(GROQ_URL, data=body, method="POST",
@@ -1021,8 +1024,13 @@ Jei žaidėjas nežaidė – "played": false. Jei patikimo šaltinio neradai –
             except urllib.error.HTTPError as e:
                 if e.code == 429:
                     self.d["gweb_pause"] = time.time() + 120
+                    self._err("web groq 429")
+                    return None
                 elif e.code in (403, 404):
-                    self.d["gweb_none"] = time.time() + 86400
+                    n404 += 1
+                    if n404 >= len(ids[:4]):
+                        self.d["gweb_none"] = time.time() + 6 * 3600   # nė vieno paieškos modelio – vėliau dar kartą
+                    continue
                 self._err(f"web groq {e.code}")
             except Exception as e:
                 self._err(f"web groq: {type(e).__name__}")
@@ -1146,7 +1154,8 @@ Jei tekste atsakymo nėra – {{"found": false}}.
             d = datetime.fromisoformat(str(r.get("date"))[:10])
             if abs((d.date() - k.date()).days) > 1:
                 return None                                 # kitos dienos rungtynės
-            if not (results.same(leg.get("home"), r.get("home")) or results.same(leg.get("home"), r.get("away"))):
+            if not (results.same(leg.get("home"), r.get("home")) or results.same(leg.get("home"), r.get("away")) or
+                    results.fuzzy_same(leg.get("home"), r.get("home")) or results.fuzzy_same(leg.get("home"), r.get("away"))):
                 return None
             st = str(r.get("status") or "").lower()
             e = {"_t1": r.get("home"), "_t2": r.get("away"), "Eps": "FT" if st == "finished" else
@@ -1705,7 +1714,7 @@ Jei tekste atsakymo nėra – {{"found": false}}.
                            "vf": b.get("vf"), "clv": b.get("clv"), "cl": b.get("clv_close"), "cat": _cat(b), "dt": [l.get("doubt") for l in b["legs"] if l.get("doubt")],
                            "legs": [{"m": f"{l.get('home')} – {l.get('away') or ''}".strip(" –"), "pick": l.get("pick"),
                                      "st": l.get("status"),
-                                     "d": (l.get("detail") or (("⏳ " + l["note"]) if l.get("note") else ""))[:110],
+                                     "d": (l.get("detail") or (("⏳ " + l["note"]) if l.get("note") else ""))[:260],
                                      "k": str(self._kick(l, b))[5:16]} for l in b["legs"][:6]]})
         bb = _bettable(bets)
         leaders = {"today": _leaders([b for b in bets if str(b["t"])[:10] == today], chats, kind),

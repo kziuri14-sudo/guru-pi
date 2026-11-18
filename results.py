@@ -5,7 +5,7 @@ kėliniais, kėlinių/setų taškais. Naudojamas pirmiausia, ESPN – žaidėjų
 """
 import gzip
 import json
-import re
+import re, difflib
 import time
 import unicodedata
 import urllib.request
@@ -75,6 +75,34 @@ def _toks(name):
     n = _fold(ALIAS.get(_fold(name), name))
     t = [w for w in n.split() if len(w) >= 3 and w not in STOP]
     return t or n.split()
+
+
+def _skel(t):
+    """Transliteracijos „skeletas“: Orobah ≈ Oruba ≈ Orubah (balsės ir galinė h nesvarbios)."""
+    t = re.sub(r"([aeiouy])h$", r"\1", t)
+    return t[:1] + re.sub(r"[aeiouyh]", "", t[1:])
+
+
+def _tok_like(x, y):
+    if x == y:
+        return True
+    if min(len(x), len(y)) < 4 or x[0] != y[0]:
+        return False
+    if difflib.SequenceMatcher(None, x, y).ratio() >= 0.8:     # Adalh ≈ Adalah (rašybos klaida)
+        return True
+    sx, sy = _skel(x), _skel(y)
+    return len(sx) >= 3 and sx == sy
+
+
+def fuzzy_same(sig_name, ev_name):
+    """Atlaidus palyginimas (rašybos klaidos, arabiškų pavadinimų transliteracija). Naudojamas TIK kai sutampa
+    abi komandos: bent vienas žodis panašus ir abiejose pusėse nelieka savų nesutampančių žodžių."""
+    a, b = _ctoks(sig_name), _ctoks(ev_name)
+    if not a or not b:
+        return False
+    ua = [t for t in a if not any(_tok_like(t, u) for u in b)]
+    ub = [u for u in b if not any(_tok_like(t, u) for t in a)]
+    return len(ua) < len(a) and not (ua and ub)
 
 
 def same(sig_name, ev_name):
@@ -244,18 +272,24 @@ def _find(b, ahead_h=30):
                 continue
             for e in evs:
                 a1, a2 = same(home, e["_t1"]), same(home, e["_t2"])
+                fz = False
+                if not (a1 or a2) and away:              # rašybos klaida / kita transliteracija (Al Adalh ↔ Al-Adalah)
+                    if fuzzy_same(home, e["_t1"]) and fuzzy_same(away, e["_t2"]):
+                        a1 = fz = True
+                    elif fuzzy_same(home, e["_t2"]) and fuzzy_same(away, e["_t1"]):
+                        a2 = fz = True
                 if not (a1 or a2):
                     continue
-                if away:
+                if away and not fz:
                     if not ((a1 and same(away, e["_t2"])) or (a2 and same(away, e["_t1"]))):
                         continue
                 elif a1 and a2:
                     continue
                 s11 = mscore(home, e["_t1"]) + mscore(away, e["_t2"])
                 s12 = mscore(home, e["_t2"]) + mscore(away, e["_t1"])
-                sw_ = s12 > s11
+                sw_ = a2 if fz else s12 > s11
                 t_h, t_a = (e["_t2"], e["_t1"]) if sw_ else (e["_t1"], e["_t2"])
-                if conflict(home, t_h) or (away and conflict(away, t_a)):
+                if not fz and (conflict(home, t_h) or (away and conflict(away, t_a))):
                     continue                             # tik miesto ar bendras žodis sutapo – kitos komandos
                 ev_w = bool(re.search(r"(?i)(\bW\b|women|female|ladies|\(w\))", f"{e['_t1']} {e['_t2']} {e['_league']}"))
                 if b.get("women") is True and not ev_w or b.get("women") is False and ev_w:
@@ -264,7 +298,7 @@ def _find(b, ahead_h=30):
                 if not (created - timedelta(hours=30) <= e["_start"] <= created + timedelta(hours=ahead_h)):
                     continue
                 score = abs((e["_start"] - ref).total_seconds()) / 3600 + _penalty(b, e) + \
-                    (0 if sport == sports[0] else 2) + (0 if away else 1)
+                    (0 if sport == sports[0] else 2) + (0 if away else 1) + (1 if fz else 0)
                 if e["_start"] + timedelta(hours=_DUR.get(sport, 3.0)) < created:
                     score += 30                          # jau pasibaigusios iki paskelbimo – renkamės kitas, jei yra
                 if best is None or score < best[0]:
@@ -601,7 +635,7 @@ def settle(b):
     return res
 
 
-SOURCES = [("ESPN/EuroLeague", "alt_event"), ("NHL.com", "nhl_event"), ("ESPN MMA", "mma_event"), ("UTMA (77.lt)", "utma_event"), ("API-Sports", "apisports_event"), ("SportScore", "sportscore_event"),
+SOURCES = [("ESPN/EuroLeague", "alt_event"), ("NHL.com", "nhl_event"), ("ESPN MMA", "mma_event"), ("UTMA (77.lt)", "utma_event"), ("UniqueTMA", "uniquetma_event"), ("API-Sports", "apisports_event"), ("SportScore", "sportscore_event"),
            ("FotMob", "fotmob_event"),
            ("365Scores", "s365_event"), ("SofaScore", "sofa_event")]
 
@@ -653,7 +687,10 @@ def _settle(b):
         if lt:
             return None, None, lt
         if state(e2) != "done" and state(e2) != "void":
-            return None, None, f"internete: rungtynės dar nesibaigė ar nevyko ({e2.get('Eps')})"
+            st0 = e2.get("_start")
+            if isinstance(st0, datetime) and st0 > datetime.now():
+                return None, None, f"numatyta {st0:%m-%d %H:%M} – laukiama ({e2.get('_league')})"
+            return None, None, f"{e2.get('_league') or 'internete'}: dar nesibaigė ar nevyko ({e2.get('Eps')})"
         res, detail = evaluate(b, e2)
         if res is None:
             return None, None, detail
