@@ -667,6 +667,19 @@ class Auditor:
                         l.pop("note", None)
                         l["tries"] = 0
             self.d["settle_ver"] = 21
+        if self.d.get("settle_ver", 0) < 22:          # panašių pavadinimų atpažinimas + UniqueTMA – nerastus tikrinam iš naujo
+            for b in self.d["bets"]:
+                if b["status"] not in ("unknown", "pending") or b.get("by_group"):
+                    continue
+                if not any("nerasta" in str(l.get("note") or l.get("detail") or "") for l in b["legs"]):
+                    continue
+                b["status"], b["tries"], b["next"] = "pending", 0, 0
+                for l in b["legs"]:
+                    if l.get("status") in (None, "unknown", "pending"):
+                        l["status"], l["detail"] = "pending", None
+                        l.pop("note", None)
+                        l["tries"] = 0
+            self.d["settle_ver"] = 22
         self._keys = {(b["c"], b["mid"]) for b in self.d["bets"]}
         self._done, self._last_save, self._sum = [], 0, (0, None)
         self._ocr = False
