@@ -667,7 +667,7 @@ class Auditor:
                         l.pop("note", None)
                         l["tries"] = 0
             self.d["settle_ver"] = 21
-        if self.d.get("settle_ver", 0) < 22:          # panašių pavadinimų atpažinimas + UniqueTMA – nerastus tikrinam iš naujo
+        if self.d.get("settle_ver", 0) < 23:          # panašūs pavadinimai, UniqueTMA, e-futbolas, rankinis – nerastus iš naujo
             for b in self.d["bets"]:
                 if b["status"] not in ("unknown", "pending") or b.get("by_group"):
                     continue
@@ -679,7 +679,7 @@ class Auditor:
                         l["status"], l["detail"] = "pending", None
                         l.pop("note", None)
                         l["tries"] = 0
-            self.d["settle_ver"] = 22
+            self.d["settle_ver"] = 23
         self._keys = {(b["c"], b["mid"]) for b in self.d["bets"]}
         self._done, self._last_save, self._sum = [], 0, (0, None)
         self._ocr = False
@@ -1934,6 +1934,11 @@ Atsakyk TIK JSON: {{"res": [{{"i": numeris, "ok": true/false, "why": "trumpai li
                     await asyncio.to_thread(props.apis_prefetch)
                 except Exception as e:
                     self._err(f"api-sports: {e}")
+            if props and hasattr(props, "esoccer_prefetch"):
+                try:
+                    await asyncio.to_thread(props.esoccer_prefetch)   # pati riboja: kas 30 min.
+                except Exception as e:
+                    self._err(f"e-futbolas: {type(e).__name__}")
             try:
                 await asyncio.to_thread(self.settle_some)
                 await asyncio.to_thread(self.odds_some)

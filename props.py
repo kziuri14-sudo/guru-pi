@@ -762,7 +762,7 @@ FOTMOB = "https://www.fotmob.com/api/data/matches?date={d:%Y%m%d}&timezone=Europ
 
 def fotmob_event(leg):
     """Futbolo rungtynės iš FotMob dienos sąrašo LiveScore formatu (None – nerado ar nesibaigė tvarkingai)."""
-    if _sp(leg) not in (None, "soccer"):
+    if _s365_sport(leg) != "soccer" or is_esoccer(leg):
         return None
     k, c = _when(leg)
     best = None
@@ -910,7 +910,9 @@ APIS_STATE = {"last": "", "used": {}, "day": ""}
 
 APIS = {"soccer": ("https://v3.football.api-sports.io/fixtures", "f"),
         "basketball": ("https://v1.basketball.api-sports.io/games", "b"),
-        "hockey": ("https://v1.hockey.api-sports.io/games", "h")}
+        "hockey": ("https://v1.hockey.api-sports.io/games", "h"),
+        "handball": ("https://v1.handball.api-sports.io/games", "hb"),
+        "volleyball": ("https://v1.volleyball.api-sports.io/games", "vb")}
 
 
 def _apis_day(d, sport="soccer"):
@@ -981,7 +983,9 @@ def _apis_day(d, sport="soccer"):
 
 
 def apisports_event(leg):
-    sport = _sp(leg) or "soccer"
+    if is_esoccer(leg):
+        return None
+    sport = _s365_sport(leg)
     if sport not in APIS or not (CFG or {}).get("apisports_key"):
         return None
     k, c = _when(leg)
@@ -1066,7 +1070,7 @@ def _s365_sport(leg):
 
 def _s365_find(leg):
     """365Scores rungtynės pagal datą ir komandas (visos sporto šakos). (žaidimas, laikas, sporto šaka) arba None."""
-    if time.time() < S365_STATE["off_until"]:
+    if time.time() < S365_STATE["off_until"] or is_esoccer(leg):
         return None
     sp = _s365_sport(leg)
     sid = S365_SPORT.get(sp)
@@ -1231,7 +1235,9 @@ def _sps_teams(name, sport):
 
 
 def sportscore_event(leg):
-    sp = _sp(leg) or "soccer"
+    if is_esoccer(leg):
+        return None
+    sp = _s365_sport(leg)
     sport = {"soccer": "football", "basketball": "basketball"}.get(sp)
     if not sport:
         return None
@@ -1996,3 +2002,199 @@ def uniquetma_event(leg):
     e.update({"Tr1": 1 if w == "h" else 0, "Tr2": 1 if w == "a" else 0, "Eps": "FT", "Ewt": 1 if w == "h" else 2,
               "_start": min(t, pd), "_league": f"uniquetma.com, {_uniq_event_name(title)}{', ' + meth if meth else ''}"})
     return e
+
+
+# ---------------------------------------------------------------- E-futbolas (FIFA / EA FC: Valhalla, GT Leagues ir kt.)
+# bettrails.com – vieši rezultatų puslapiai (robots.txt leidžia). Dienos puslapis rodo tik paskutines 50 rungtynių,
+# todėl kas 30 min. išsaugom naujas eilutes diske; pagal žaidėjų slapyvardžius – „h2h“ puslapis su visa istorija.
+ES_BASE = "https://bettrails.com"
+ES_LEAGUES = ("valhalla", "gtleagues", "adriatic", "valkyrie", "ggleague", "esportsbattle", "erivals",
+              "cyberlivearena", "volta")
+ES_STATE = {"last": "", "pf": 0, "rows": None, "dirty": False}
+ES_RE = re.compile(r"e-?sport|e-?soccer|e-?football|e-?futbol|cyber|fifa|ea ?fc|valhalla|gt ?league|esoccer|volta|"
+                   r"adriatic|valkyrie|h2h gg|8 ?min|10 ?min|12 ?min", re.I)
+
+
+def is_esoccer(leg):
+    if re.search(r"\b(e-?sports?|esoccer|e-?sportas)\b", str(leg.get("sport") or ""), re.I):
+        return True
+    if ES_RE.search(f"{leg.get('league') or ''} {leg.get('sport') or ''}"):
+        return True
+    if _s365_sport(leg) != "soccer":
+        return False
+    for n in (leg.get("home"), leg.get("away")):          # „FC Bayern (Dzen)“ – komanda (žaidėjo slapyvardis)
+        m = re.search(r"\(\s*([A-Za-z0-9_.-]{2,20})\s*\)\s*$", str(n or ""))
+        if m and not re.fullmatch(r"(?i)u\d{2}|w|women|ladies|res|reserves?|ii|iii|b|am|youth|[A-Z]{2,3}", m.group(1)):
+            return True
+    return False
+
+
+def _es_split(name):
+    m = re.match(r"^(.*?)\s*\(\s*([^()]+?)\s*\)\s*$", str(name or ""))
+    return (m.group(1).strip(), m.group(2).strip().lower()) if m else (str(name or "").strip(), None)
+
+
+def _es_html(path, ttl):
+    hit = _c.get(path)
+    if hit and time.time() - hit[0] < ttl:
+        return hit[1]
+    req = urllib.request.Request(ES_BASE + path, headers={"User-Agent": HDR["User-Agent"], "Accept": "text/html",
+                                                          "Accept-Language": "en"})
+    try:
+        with urllib.request.urlopen(req, timeout=25) as r:
+            h = r.read().decode("utf-8", "ignore")
+    except urllib.error.HTTPError as e:
+        h = "" if e.code == 404 else None
+        ES_STATE["last"] = f"HTTP {e.code}"
+    except Exception as e:
+        ES_STATE["last"] = type(e).__name__
+        return None
+    if h is not None:
+        _c[path] = (time.time(), h)
+        if h:
+            ES_STATE["last"] = "ok"
+    return h
+
+
+def _es_rows(h, league):
+    """[(lyga, žaid.1, komanda1, žaid.2, komanda2, įv.1, įv.2, laikas|None, data)] iš rezultatų ar h2h puslapio."""
+    out = []
+    for row in re.findall(r"<tr data-vk=\"[^\"]*\">(.*?)</tr>", h or "", re.S):
+        sc = re.search(r"class=\"score\">\s*<span[^>]*>(\d+)</span>\s*(?:<span class=\"sep\">)?–(?:</span>)?\s*"
+                       r"<span[^>]*>(\d+)</span>", row)
+        if not sc:
+            continue
+        pl = re.findall(r"<span class=\"pl\">([^<]+)</span>", row)
+        tm = [html.unescape(x).strip(" ()") for x in re.findall(r"<span class=\"tm\">([^<]+)</span>", row)]
+        if len(pl) < 2:                                  # h2h: <span class="side">DZEN <span class="tm">(FC Bayern)</span>
+            pl = re.findall(r"<span class=\"side\">\s*([^<]+?)\s*<span", row)
+        if len(pl) < 2 or len(tm) < 2:
+            continue
+        t, d = None, None
+        m = re.search(r"datetime=\"([^\"]+)\"", row)
+        if m:
+            try:
+                t = datetime.fromisoformat(m.group(1)).astimezone().replace(tzinfo=None)
+                d = t.date()
+            except Exception:
+                t = None
+        if d is None:
+            m = re.search(r"(\d{2})/(\d{2})/(\d{4})", row)
+            if m:
+                d = date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+        if d is None:
+            continue
+        out.append((league, html.unescape(pl[0]).strip().lower(), tm[0], html.unescape(pl[1]).strip().lower(), tm[1],
+                    int(sc.group(1)), int(sc.group(2)), t, d))
+    return out
+
+
+def _es_store():
+    if ES_STATE["rows"] is None:
+        ES_STATE["rows"] = {}
+        try:
+            for r in json.loads((CACHE_DIR / "esoccer.json").read_text("utf-8")) if CACHE_DIR else []:
+                r[7] = datetime.fromisoformat(r[7]) if r[7] else None
+                r[8] = date.fromisoformat(r[8])
+                ES_STATE["rows"][_es_key(r)] = tuple(r)
+        except Exception:
+            pass
+    return ES_STATE["rows"]
+
+
+def _es_key(r):
+    return f"{r[0]}|{r[1]}|{r[2]}|{r[3]}|{r[4]}|{r[7] or r[8]}"
+
+
+def _es_add(rows):
+    st = _es_store()
+    for r in rows:
+        if r[7] is not None or not any(x[7] and x[1:5] == r[1:5] and x[8] == r[8] for x in st.values()):
+            if _es_key(r) not in st:
+                st[_es_key(r)] = r
+                ES_STATE["dirty"] = True
+
+
+def _es_save():
+    if not ES_STATE["dirty"] or not CACHE_DIR:
+        return
+    lim = date.today() - timedelta(days=12)
+    st = {k: r for k, r in _es_store().items() if r[8] >= lim}
+    ES_STATE["rows"] = st
+    try:
+        (CACHE_DIR / "esoccer.json").write_text(json.dumps(
+            [list(r[:7]) + [r[7].isoformat() if r[7] else None, r[8].isoformat()] for r in st.values()]), "utf-8")
+        ES_STATE["dirty"] = False
+    except Exception:
+        pass
+
+
+def esoccer_prefetch():
+    """Kas 30 min.: visų e-futbolo lygų naujausi rezultatai išsaugomi (dienos puslapis rodo tik 50 paskutinių)."""
+    if time.time() - ES_STATE["pf"] < 1800:
+        return
+    ES_STATE["pf"] = time.time()
+    for lg in ES_LEAGUES:
+        h = _es_html(f"/resultados/{lg}?lang=en", ttl=600)
+        if h:
+            _es_add(_es_rows(h, lg))
+    _es_save()
+
+
+def esoccer_event(leg):
+    """E-futbolo rungtynės (komanda + žaidėjo slapyvardis) LiveScore formatu."""
+    if not is_esoccer(leg):
+        return None
+    (c1, n1), (c2, n2) = _es_split(leg.get("home")), _es_split(leg.get("away"))
+    if not c1 or not c2:
+        return None
+    k, c = _when(leg)
+    rows = list(_es_store().values())
+    for d in sorted({c.date(), k.date()}):                # tos dienos vakaro rezultatai (paskutinės 50 kiekvienoje lygoje)
+        old = d < date.today()
+        for lg in ES_LEAGUES:
+            h = _es_html(f"/resultados/{lg}?lang=en&mes={d:%Y-%m}&dia={d:%Y-%m-%d}", ttl=86400 if old else 900)
+            if h:
+                rows += _es_rows(h, lg)
+    if n1 and n2:                                         # abu slapyvardžiai – visa jų tarpusavio istorija
+        a, b = sorted([n1, n2])
+        for lg in ES_LEAGUES:
+            h = _es_html(f"/h2h/{lg}/{urllib.parse.quote(a)}-vs-{urllib.parse.quote(b)}?lang=en", ttl=1800)
+            if h:
+                rows += _es_rows(h, lg)
+    _es_add([r for r in rows if r[7] is not None])
+    _es_save()
+    clubs = lambda s, x: R.same(s, x) or R.same(x, s) or R.fuzzy_same(s, x)
+    cands = {}
+    for r in rows:
+        lg, p1, t1, p2, t2, s1, s2, t, d = r
+        for sw, (ha, hn, aa, an) in ((False, (t1, p1, t2, p2)), (True, (t2, p2, t1, p1))):
+            if not (clubs(c1, ha) and clubs(c2, aa)):
+                continue
+            if (n1 and n1 != hn) or (n2 and n2 != an):
+                continue
+            if t is not None:
+                if not (c - timedelta(minutes=20) <= t <= c + timedelta(hours=6 if (n1 or n2) else 1.5)):
+                    continue
+            elif d != c.date() or not (n1 and n2):
+                continue
+            cands[(lg, p1, p2, t1, t2, s1, s2, t or d)] = (r, sw)
+    if not cands:
+        return None
+    timed = [v for v in cands.values() if v[0][7] is not None]
+    pool = timed or list(cands.values())
+    if len(pool) > 1:
+        uniq = {(r[1], r[3], r[5], r[6]) for r, _ in pool}
+        if len(uniq) > 1:
+            pool.sort(key=lambda v: v[0][7] or datetime.max)
+            if not (n1 and n2) or pool[0][0][7] is None:
+                return None                               # kelios galimos rungtynės – nespėliojam
+        pool = pool[:1]
+    r, sw = pool[0]
+    lg, p1, t1, p2, t2, s1, s2, t, d = r
+    hs, as_ = (s2, s1) if sw else (s1, s2)
+    st0 = t or (c + timedelta(minutes=5))
+    return {"_t1": f"{t2 if sw else t1} ({(p2 if sw else p1).upper()})",
+            "_t2": f"{t1 if sw else t2} ({(p1 if sw else p2).upper()})",
+            "Tr1": hs, "Tr2": as_, "Eps": "FT", "Ewt": 1 if hs > as_ else 2 if as_ > hs else 3, "_sport": "soccer",
+            "_swapped": False, "_start": st0, "_league": f"e-futbolas {lg} (bettrails.com)"}

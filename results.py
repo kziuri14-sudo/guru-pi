@@ -646,7 +646,13 @@ def alt_sources(b, tried):
         import props
     except Exception:
         return None
-    for name, fn in SOURCES:
+    src = SOURCES
+    try:
+        if props.is_esoccer(b):                           # e-futbolas – ne tikros rungtynės (Bayern ≠ „FC Bayern (Dzen)“)
+            src = [("e-futbolas (bettrails)", "esoccer_event")]
+    except Exception:
+        pass
+    for name, fn in src:
         f = getattr(props, fn, None)
         if not f:
             continue
@@ -666,7 +672,7 @@ def alt_sources(b, tried):
         elif name == "SofaScore" and "403" in str(getattr(props, "SOFA_STATE", {}).get("last", "")):
             why = " (neleidžia, 403)"
         tried.append(f"{name} ✗{why}")
-    if WEB:
+    if WEB and src is SOURCES:                            # e-futbolui internetas grąžintų tikrų rungtynių rezultatą
         try:
             e = WEB(b)
         except Exception:

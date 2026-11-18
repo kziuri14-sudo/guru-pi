@@ -556,6 +556,70 @@ def uniquetma_card_and_result():
 
 
 @test
+def esoccer_bettrails():
+    # „FC Bayern (Dzen) – Leverkusen (Kovboj) Over 4.5“ (2026-11-16) – Valhalla lyga 2:3 → laimėta; ne tikros Bayern rungtynės
+    h2h = ('<tr data-vk="m138074752"><td class="m"><span class="side">DZEN <span class="tm">(FC Bayern)</span></span> '
+           '<span class="vsm">vs</span> <span class="side">KOVBOJ <span class="tm">(Leverkusen)</span></span></td>'
+           '<td class="score"><span class="">2</span>–<span class="win">3</span></td><td class="date">16/11/2026</td></tr>'
+           '<tr data-vk="m138028679"><td class="m"><span class="side">DZEN <span class="tm">(Slavia Praha)</span></span> '
+           '<span class="vsm">vs</span> <span class="side">KOVBOJ <span class="tm">(Liverpool)</span></span></td>'
+           '<td class="score"><span class="">0</span>–<span class="win">2</span></td><td class="date">16/11/2026</td></tr>')
+    day = ('<tbody data-vz="t"><tr data-vk="zaroth-arkon@2026-11-17 20:44">\n<td><a class="row-link" href="#"><div class="vs">'
+           '<div class="home"><div class="team"><span class="pl">ZAROTH</span>\n<span class="tm">Juventus</span></div></div>'
+           '<span class="mid">VS</span><div class="away"><div class="team"><span class="pl">ARKON</span>\n'
+           '<span class="tm">Arsenal</span></div></div></div></a></td>\n<td class="score">\n<span class="win">5</span>'
+           '<span class="sep">–</span><span class="">3</span>\n</td><td class="total">8</td><td class="date">'
+           '<time datetime="2026-11-17T20:44:00+01:00">17/11/2026 · 20:44</time></td>\n</tr>')
+    oh, orows, ocd = P._es_html, P.ES_STATE["rows"], P.CACHE_DIR
+    P.ES_STATE["rows"], P.CACHE_DIR = {}, None
+    P._es_html = lambda path, ttl: h2h if "/h2h/valhalla/dzen-vs-kovboj" in path else \
+        day if "/resultados/valhalla" in path and "2026-11-17" in path else ""
+    try:
+        leg = {"sport": "esports", "home": "FC Bayern (Dzen)", "away": "Leverkusen (Kovboj)", "pick": "Over 4.5",
+               "side": "Over", "line": 4.5, "kickoff": "2026-11-16T22:09", "created": "2026-11-16T22:09"}
+        assert P.is_esoccer(leg)
+        e = P.esoccer_event(leg)
+        assert e and (e["Tr1"], e["Tr2"]) == (2, 3), e
+        assert st(R.evaluate(leg, e)) == "won"
+        e2 = P.esoccer_event(dict(leg, home="Leverkusen (Kovboj)", away="FC Bayern (Dzen)"))
+        assert (e2["Tr1"], e2["Tr2"]) == (3, 2), e2
+        leg2 = {"sport": "esports", "home": "Juventus", "away": "Arsenal", "pick": "Over 6.5", "side": "Over",
+                "line": 6.5, "kickoff": "2026-11-17T21:42", "created": "2026-11-17T21:42"}
+        e = P.esoccer_event(leg2)                                   # 20:44 CET = 21:44 Vilniuje
+        assert e and (e["Tr1"], e["Tr2"]) == (5, 3) and st(R.evaluate(leg2, e)) == "won", e
+        tried = []
+        called = []
+        of = P.fotmob_event
+        P.fotmob_event = lambda l: called.append(1)
+        try:
+            R.alt_sources(leg, tried)
+        finally:
+            P.fotmob_event = of
+        assert not called and tried and "e-futbolas" in tried[0], tried   # tikro futbolo šaltinių neklausiam
+        assert P.is_esoccer({"sport": "soccer", "home": "Arsenal (W)", "away": "Chelsea (W)"}) is False
+    finally:
+        P._es_html, P.ES_STATE["rows"], P.CACHE_DIR = oh, orows, ocd
+
+
+@test
+def apisports_handball():
+    # Anagennisi Artas (W) – AEK Athens (W) rankinis: API-Sports handball
+    od, ocfg = P._apis_day, P.CFG
+    P.CFG = {"apisports_key": "x"}
+    P._apis_day = lambda d, sport="soccer": [{"date": "2026-11-18T18:00:00+02:00", "st": "FT", "h": "Anagennisi Artas W",
+                                              "a": "AEK Athens W", "gh": 29, "ga": 31, "lg": "Greece – A1 Women"}] \
+        if sport == "handball" and str(d) == "2026-11-18" else []
+    try:
+        leg = {"sport": "handball", "home": "Anagennisi Artas", "away": "AEK Athens HC", "pick": "Over 54.5",
+               "side": "Over", "line": 54.5, "kickoff": "2026-11-18T18:00", "created": "2026-11-18T15:11"}
+        e = P.apisports_event(leg)
+        assert e and (e["Tr1"], e["Tr2"]) == (29, 31) and e["_sport"] == "handball", e
+        assert st(R.evaluate(leg, e)) == "won"
+    finally:
+        P._apis_day, P.CFG = od, ocfg
+
+
+@test
 def dashboard_has_required_parts():
     h = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "dash.html"), encoding="utf-8").read()
     for x in ("fetch('/api?k=", "id=\"dayTable\"", "id=\"g_code\"", "id=\"homeDays\"", "id=\"sigCard\"", "Powered by SportScore",
