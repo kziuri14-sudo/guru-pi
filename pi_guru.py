@@ -1057,7 +1057,7 @@ def app_beacon():
     (jos niekas neprenumeruoja – pranešimų nebus). Programėlė iš ten sužino, kur jungtis, net kai adresas pasikeičia."""
     last, sent = None, 0
     glast, gsent = None, 0
-    dsent = time.time() - 840
+    dsent = time.time() - 600
     while True:
         try:
             gl = guest_link() if SETTINGS.get("guest_on") else None
@@ -1080,7 +1080,12 @@ def app_beacon():
             a = AUDIT.get("a")
             if a and time.time() - dsent > 900:
                 dsent = time.time()
-                body = json.dumps(a.diag(), ensure_ascii=False, separators=(",", ":")).encode()[:3900]
+                body = json.dumps(a.diag(), ensure_ascii=False, separators=(",", ":")).encode()
+                if len(body) > 3900:                          # per ilgas – be žinučių pavyzdžių
+                    dd = a.diag()
+                    for v in (dd.get("lwt") or {}).values():
+                        v[-1] = [x[:2] + x[3:] for x in v[-1]][-5:]
+                    body = json.dumps(dd, ensure_ascii=False, separators=(",", ":")).encode()[:3900]
                 req = urllib.request.Request(NTFY + "-diag", data=body, method="POST",
                                              headers={"Title": "guru-diag", "Priority": "1", "Cache": "yes"})
                 with urllib.request.urlopen(req, timeout=20):

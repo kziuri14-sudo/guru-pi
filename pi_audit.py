@@ -882,6 +882,10 @@ class Auditor:
                         self.d["bf_done"][cid] = self.days
             except Exception as e:
                 self.log.info("audit collect %s: %s", name, str(e)[:150])
+                self._cstat(cid)["err"] = f"{datetime.now():%m-%d %H:%M} {type(e).__name__}: {str(e)[:60]}"
+            cs = self._cstat(cid)
+            cs["kept"] = cs.get("kept", 0) + len(new)
+            cs["last"] = datetime.now().strftime("%H:%M")
             if new:
                 self._insert(new)
                 self.log.info("📥 %s: +%d žinučių", name, len(new))
@@ -903,6 +907,31 @@ class Auditor:
             self.d["web_used"] = self.d["sweb_used"] = self.d["sweb_ok"] = 0
         return self._groq_ok() or self._gem_ok()
 
+    def _cstat(self, cid):
+        st = self.d.setdefault("cstat", {})
+        today = datetime.now().strftime("%m-%d")
+        cs = st.get(cid)
+        if not cs or cs.get("day") != today:
+            cs = st[cid] = {"day": today, "kept": 0, "ai": 0, "bets": 0, "noimg": 0, "log": (cs or {}).get("log", [])}
+        return cs
+
+    def _trace(self, items, res, imgs):
+        """Ką AI matė ir ką rado (paskutinės 12 žinučių kiekvienai grupei) – diagnostikai."""
+        got = {}
+        for m in (res or {}).get("msgs") or []:
+            try:
+                got[int(m.get("n"))] = len(m.get("bets") or [])
+            except Exception:
+                pass
+        for i, (cid, mid, t, txt, photo, u, un, tries) in enumerate(items, 1):
+            cs = self._cstat(cid)
+            cs["ai"] += 1
+            cs["bets"] += got.get(i, 0)
+            if photo and i not in imgs:
+                cs["noimg"] += 1
+            cs["log"] = (cs.get("log") or [])[-11:] + [[t[5:16], str(un or "")[:10], (txt or "")[:40], int(photo),
+                                                        int(i in imgs), got.get(i, 0)]]
+
     def diag(self):
         """Trumpa būsena diagnostikai (tyliai į ntfy „<tema>-diag“): eilė pagal grupes, AI biudžetai, klaidos."""
         today = datetime.now().strftime("%Y-%m-%d")
@@ -911,15 +940,19 @@ class Auditor:
         nb, nbt = {}, {}
         for b in self.d["bets"]:
             nb[b["c"]] = nb.get(b["c"], 0) + 1
-            if str(b.get("created") or "")[:10] == today:
+            if str(b.get("t") or "")[:10] == today:
                 nbt[b["c"]] = nbt.get(b["c"], 0) + 1
         rows = []
         for c, n, ph, mn, mx, tr in sorted(q, key=lambda r: -r[1])[:14]:
             rows.append([str(self.d["chats"].get(c, c))[:22], self.d["kind"].get(c, "")[:2], n, ph or 0,
                          str(mn)[5:16], str(mx)[5:16], tr or 0, nbt.get(c, 0)])
+        cst = self.d.get("cstat") or {}
         lwt = {str(nm)[:22]: [c, self.d["kind"].get(c), nb.get(c, 0), nbt.get(c, 0), self.d["last_id"].get(c),
-                              self.d["bf_done"].get(c, 0)]
+                              {k: v for k, v in (cst.get(c) or {}).items() if k != "log"},
+                              (cst.get(c) or {}).get("log", [])[-8:]]
                for c, nm in self.d["chats"].items() if "lwt" in _n(nm)}
+        rows.append(["ALL", "", sum(nbt.values()), sum((x.get("ai", 0) for x in cst.values())),
+                     sum((x.get("kept", 0) for x in cst.values())), sum((x.get("noimg", 0) for x in cst.values())), 0, 0])
         errs = sorted((self.d.get("err") or {}).items(), key=lambda kv: -kv[1])[:6] \
             if isinstance(self.d.get("err"), dict) else []
         return {"t": datetime.now().isoformat(timespec="minutes"), "q": self.qlen(), "qp": self.qlen(True),
@@ -1308,6 +1341,10 @@ Jei tekste atsakymo nėra – {{"found": false}}.
                 if res is None:
                     self._fail(items)
                 return
+            try:
+                self._trace(items, res, imgs)
+            except Exception:
+                pass
             self._take(items, res)
             await asyncio.sleep(2)
 
