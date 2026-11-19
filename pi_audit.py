@@ -667,6 +667,28 @@ class Auditor:
                         l.pop("note", None)
                         l["tries"] = 0
             self.d["settle_ver"] = 21
+        if self.d.get("dup_ver", 0) < 1:              # kanalo įrašų kopijos jo diskusijų grupėje – išmetam (dvigubas skaičiavimas)
+            ch = {}
+            for b in self.d["bets"]:
+                if self.d["kind"].get(b["c"]) == "channel" and b["legs"]:
+                    ch.setdefault((_n(str(b["legs"][0].get("home"))), _n(str(b["legs"][0].get("pick")))), []).append(b)
+            keep = []
+            for b in self.d["bets"]:
+                dup = False
+                if self.d["kind"].get(b["c"]) == "group" and b["legs"]:
+                    for cb in ch.get((_n(str(b["legs"][0].get("home"))), _n(str(b["legs"][0].get("pick")))), []):
+                        try:
+                            if abs((datetime.fromisoformat(b["t"]) - datetime.fromisoformat(cb["t"])).total_seconds()) < 900 \
+                                    and len(cb["legs"]) == len(b["legs"]) and _n(str(b.get("un") or ""))[:6] == \
+                                    _n(str(self.d["chats"].get(cb["c"], "")))[:6]:
+                                dup = True
+                        except Exception:
+                            pass
+                if not dup:
+                    keep.append(b)
+            self.d["dups_removed"] = len(self.d["bets"]) - len(keep)
+            self.d["bets"] = keep
+            self.d["dup_ver"] = 1
         if self.d.get("settle_ver", 0) < 23:          # panašūs pavadinimai, UniqueTMA, e-futbolas, rankinis – nerastus iš naujo
             for b in self.d["bets"]:
                 if b["status"] not in ("unknown", "pending") or b.get("by_group"):
@@ -826,6 +848,8 @@ class Auditor:
             return None
         if not m.photo and (RESULT_ONLY.match(t) or (AD_RE.search(t) and not BET_RE.search(t) and len(t) > 120)):
             return None
+        if self.d["kind"].get(cid) == "group" and self._from_tracked_channel(m, cid):
+            return None                                   # kanalo įrašas, persiųstas į jo diskusijų grupę – jau skaičiuojam kanale
         if (cid, m.id) in self._keys or self.db.execute("SELECT 1 FROM done WHERE c=? AND id=?",
                                                           (cid, m.id)).fetchone():
             return None
@@ -834,6 +858,21 @@ class Auditor:
         if self.d["kind"].get(cid) == "group":          # pokalbių grupė – kas parašė (narys)
             q["u"], q["un"] = m.sender_id, _who(m)
         return q
+
+    def _from_tracked_channel(self, m, cid):
+        ids = []
+        try:
+            if m.sender_id and int(m.sender_id) < 0:
+                ids.append(str(m.sender_id))
+        except Exception:
+            pass
+        try:
+            ch = getattr(getattr(getattr(m, "fwd_from", None), "from_id", None), "channel_id", None)
+            if ch:
+                ids.append(f"-100{ch}")
+        except Exception:
+            pass
+        return any(i != str(cid) and i in self.d["chats"] for i in ids)
 
     def since(self):
         """Nuo kada analizuojam: nustatymų „audit_since“ arba nunulinimo diena (00:00), bet ne senesnė nei N d."""
@@ -913,7 +952,8 @@ class Auditor:
         today = datetime.now().strftime("%m-%d")
         cs = st.get(cid)
         if not cs or cs.get("day") != today:
-            cs = st[cid] = {"day": today, "kept": 0, "ai": 0, "bets": 0, "noimg": 0, "log": (cs or {}).get("log", [])}
+            cs = st[cid] = {"day": today, "kept": 0, "ai": 0, "bets": 0, "noimg": 0, "log": (cs or {}).get("log", []),
+                            "miss": (cs or {}).get("miss", [])}
         return cs
 
     def _trace(self, items, res, imgs):
@@ -932,6 +972,9 @@ class Auditor:
                 cs["noimg"] += 1
             cs["log"] = (cs.get("log") or [])[-11:] + [[t[5:16], str(un or "")[:10], (txt or "")[:40], int(photo),
                                                         int(i in imgs), got.get(i, 0)]]
+            if not got.get(i) and (photo or BET_RE.search(txt or "")):     # panašu į statymą, bet AI nerado – peržiūrai
+                cs["miss"] = (cs.get("miss") or [])[-9:] + [[mid, t[11:16], str(un or "")[:10], (txt or "")[:70],
+                                                              int(photo), int(i in imgs)]]
 
     def diag(self):
         """Trumpa būsena diagnostikai (tyliai į ntfy „<tema>-diag“): eilė pagal grupes, AI biudžetai, klaidos."""
@@ -949,8 +992,8 @@ class Auditor:
                          str(mn)[5:16], str(mx)[5:16], tr or 0, nbt.get(c, 0)])
         cst = self.d.get("cstat") or {}
         lwt = {str(nm)[:22]: [c, self.d["kind"].get(c), nb.get(c, 0), nbt.get(c, 0), self.d["last_id"].get(c),
-                              {k: v for k, v in (cst.get(c) or {}).items() if k != "log"},
-                              (cst.get(c) or {}).get("log", [])[-8:],
+                              {k: v for k, v in (cst.get(c) or {}).items() if k not in ("log", "miss")},
+                              (cst.get(c) or {}).get("miss", [])[-10:],
                               [[b["mid"], str(b["t"])[11:16], str(b.get("un") or "")[:10],
                                 str((b["legs"][0] or {}).get("pick") or "")[:24], len(b["legs"])]
                                for b in self.d["bets"] if b["c"] == c and str(b.get("t"))[:10] == today][-8:]]

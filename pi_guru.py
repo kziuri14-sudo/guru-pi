@@ -1084,7 +1084,7 @@ def app_beacon():
                 if len(body) > 3900:                          # per ilgas – be žinučių pavyzdžių
                     dd = a.diag()
                     for v in (dd.get("lwt") or {}).values():
-                        v[-1] = [x[:2] + x[3:] for x in v[-1]][-5:]
+                        v[-2] = [x[:3] + [x[3][:35]] + x[4:] for x in v[-2]][-6:]
                     body = json.dumps(dd, ensure_ascii=False, separators=(",", ":")).encode()[:3900]
                 req = urllib.request.Request(NTFY + "-diag", data=body, method="POST",
                                              headers={"Title": "guru-diag", "Priority": "1", "Cache": "yes"})
