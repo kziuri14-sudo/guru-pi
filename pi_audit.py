@@ -903,6 +903,33 @@ class Auditor:
             self.d["web_used"] = self.d["sweb_used"] = self.d["sweb_ok"] = 0
         return self._groq_ok() or self._gem_ok()
 
+    def diag(self):
+        """Trumpa būsena diagnostikai (tyliai į ntfy „<tema>-diag“): eilė pagal grupes, AI biudžetai, klaidos."""
+        today = datetime.now().strftime("%Y-%m-%d")
+        q = self.db.execute("SELECT c, COUNT(*), SUM(photo), MIN(t), MAX(t), SUM(tries>0) FROM q WHERE tries<99 "
+                            "GROUP BY c").fetchall()
+        nb, nbt = {}, {}
+        for b in self.d["bets"]:
+            nb[b["c"]] = nb.get(b["c"], 0) + 1
+            if str(b.get("created") or "")[:10] == today:
+                nbt[b["c"]] = nbt.get(b["c"], 0) + 1
+        rows = []
+        for c, n, ph, mn, mx, tr in sorted(q, key=lambda r: -r[1])[:14]:
+            rows.append([str(self.d["chats"].get(c, c))[:22], self.d["kind"].get(c, "")[:2], n, ph or 0,
+                         str(mn)[5:16], str(mx)[5:16], tr or 0, nbt.get(c, 0)])
+        lwt = {str(nm)[:22]: [c, self.d["kind"].get(c), nb.get(c, 0), nbt.get(c, 0), self.d["last_id"].get(c),
+                              self.d["bf_done"].get(c, 0)]
+               for c, nm in self.d["chats"].items() if "lwt" in _n(nm)}
+        errs = sorted((self.d.get("err") or {}).items(), key=lambda kv: -kv[1])[:6] \
+            if isinstance(self.d.get("err"), dict) else []
+        return {"t": datetime.now().isoformat(timespec="minutes"), "q": self.qlen(), "qp": self.qlen(True),
+                "drop": self.d.get("dropped", 0), "ai": [self.d.get("ai_used"), self.cap, self.d.get("groq_used"),
+                                                          self.gcap], "ocr": [bool(self._ocr), self.d.get("ocr_used")],
+                "pause": int(max(0, self.d.get("pause_until", 0) - time.time())),
+                "gpause": int(max(0, self.d.get("groq_pause", 0) - time.time())),
+                "chats": len(self.d["chats"]), "bf_left": self.backfill_left(), "rows": rows, "lwt": lwt,
+                "err": [[k[:60], v] for k, v in errs]}
+
     def forced(self):
         """Grupės, kurios analizuojamos VISADA (net jei mažai statymų) – pagal nutylėjimą GURU G⚽AL ir GuruChat LT."""
         return [_n(x) for x in (self.cfg.get("audit_first") or ["GURU G", "GuruGoal", "GuruChat"])]
