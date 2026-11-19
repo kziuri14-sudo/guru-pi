@@ -858,6 +858,7 @@ class Auditor:
                 last = int(self.d["last_id"].get(cid, 0))
                 if last and self.d["bf_done"].get(cid, 0) >= self.days:       # naujos žinutės nuo paskutinės
                     async for m in self.client.iter_messages(int(cid), min_id=last, reverse=True, limit=per_chat):
+                        self._cstat(cid)["seen"] = self._cstat(cid).get("seen", 0) + 1
                         self.d["last_id"][cid] = max(int(self.d["last_id"].get(cid, 0)), m.id)
                         self._reply_mark(m, cid)
                         q = self._keep(m, cid)
@@ -949,7 +950,10 @@ class Auditor:
         cst = self.d.get("cstat") or {}
         lwt = {str(nm)[:22]: [c, self.d["kind"].get(c), nb.get(c, 0), nbt.get(c, 0), self.d["last_id"].get(c),
                               {k: v for k, v in (cst.get(c) or {}).items() if k != "log"},
-                              (cst.get(c) or {}).get("log", [])[-8:]]
+                              (cst.get(c) or {}).get("log", [])[-8:],
+                              [[b["mid"], str(b["t"])[11:16], str(b.get("un") or "")[:10],
+                                str((b["legs"][0] or {}).get("pick") or "")[:24], len(b["legs"])]
+                               for b in self.d["bets"] if b["c"] == c and str(b.get("t"))[:10] == today][-8:]]
                for c, nm in self.d["chats"].items() if "lwt" in _n(nm)}
         rows.append(["ALL", "", sum(nbt.values()), sum((x.get("ai", 0) for x in cst.values())),
                      sum((x.get("kept", 0) for x in cst.values())), sum((x.get("noimg", 0) for x in cst.values())), 0, 0])
